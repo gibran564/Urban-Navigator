@@ -1,761 +1,665 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import type * as Pixi from 'pixi.js';
+import { MAX_EVENT_RADIUS, URBAN_EVENT_CONFIG } from '@/engine/events';
 import type { Incident, Route } from '@/lib/types';
-import { nrc, hDir, vDir, NROWS, NCOLS } from '@/lib/graph';
+import { hDir, NCOLS, NROWS, nrc, vDir } from '@/lib/graph';
+import { LayerManager } from '@/renderer/LayerManager';
+import {
+  angleAt,
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
+  GRID_SIZE,
+  lerpAngle,
+  MAP_OFFSET,
+  nearestNode,
+  nodeX,
+  nodeY,
+  pathAt,
+  STEP,
+  STREET,
+  BLOCK,
+  type Point,
+} from '@/renderer/mapGeometry';
+import { MAP_THEMES, type ThemeName } from '@/renderer/mapTheme';
 
-// Medidas del mapa
-const STREET = 16, BLOCK = 54, STEP = STREET + BLOCK; // 70px per cell
-const MOFF   = 54;
-const GRID   = NCOLS * STEP - BLOCK; // 726 - 54 = 672... let me recalc
-// 11 intersections → 10 blocks + 11 streets
-// Width = 11*STREET + 10*BLOCK = 11*16 + 10*54 = 176 + 540 = 716
-const GRID_W = NCOLS * STREET + (NCOLS - 1) * BLOCK; // 716
-const CW = MOFF * 2 + GRID_W;  // 108 + 716 = 824
-const CH = CW;
-
-// Centro de cada nodo
-const nx = (c: number) => MOFF + c * STEP + STREET / 2;
-const ny = (r: number) => MOFF + r * STEP + STREET / 2;
-
-// Colores
-const C = {
-  bg:        0xfdf7ee,  // warm cream canvas
-  street:    0xe0d4c0,  // warm tan street surface
-  streetLn:  0xcdc0a8,  // street center-line darker
-  block:     0xf5eddb,  // lighter cream for manzanas
-  blockEdge: 0xe8dbc8,  // slightly darker block edge
-  interDot:  0xc8b89a,  // intersection dot
-  arrowDir:  0xbaa888,  // direction tick
-
-  // Routes — vivid on light bg
-  r0: 0x3aa857, r1: 0x3b82f6, r2: 0xe8742a,
-
-  // Incidents
-  iBlock:   0xe03c3c,
-  iTraffic: 0xe8742a,
-  iRadar:   0x38bdf8,
-
-  // Markers
-  originFill: 0x3aa857,
-  destFill:   0xe03c3c,
-  white:      0xffffff,
-  textDark:   0x3c2a1e,
-  textMuted:  0x9a8070,
-
-  // Mueve taxi
-  taxiBody:   0xfdd835,
-  taxiRoof:   0xf9a825,
-  taxiGlass:  0x90caf9,
-  taxiWheel:  0x4e342e,
-  taxiLight:  0xfff9c4,
-};
-
-// Colores de autos para trafico
-const CAR_COLORS = [0xe53935, 0x1e88e5, 0x43a047, 0xfb8c00, 0x8e24aa, 0x00897b, 0xd81b60, 0xf4511e];
-
-// Capas de dibujo
-const L = { BG:0, GRID:1, INC_HALO:2, TRAFFIC:3, R0:4, R1:5, R2:6, MARKERS:7, LABELS:8, HOVER:9, TAXI:10 };
-
-const ROUTE_COLORS = [C.r0, C.r1, C.r2];
-
-// Tipos
 interface TrafficCar {
-  x1:number; y1:number; x2:number; y2:number;
-  isH:boolean; progress:number; speed:number;
-  laneOff:number; color:number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  horizontal: boolean;
+  progress: number;
+  speed: number;
+  laneOffset: number;
+  color: number;
 }
 
 export interface MapCanvasProps {
-  incidents:   Incident[];
-  routes:      Route[];
-  originH:number; originV:number;
-  destH:number;   destV:number;
-  isPlaying:boolean; playSpeed:number; selectedRoute:number;
-  taxiProgress:number;
-  onContextMenu:(r:number,c:number,sx:number,sy:number)=>void;
-  onTaxiProgress:(p:number)=>void;
-  onTaxiDone:()=>void;
+  incidents: Incident[];
+  routes: Route[];
+  originH: number;
+  originV: number;
+  destH: number;
+  destV: number;
+  isPlaying: boolean;
+  playSpeed: number;
+  selectedRoute: number;
+  taxiProgress: number;
+  theme: ThemeName;
+  isCalculating: boolean;
+  onContextMenu: (r: number, c: number, sx: number, sy: number) => void;
+  onTaxiProgress: (p: number) => void;
+  onTaxiDone: () => void;
 }
 
-// Componente principal
-export default function MapCanvas(p: MapCanvasProps) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const ctxRef  = useRef<{PIXI:any;app:any;layers:any[]}|null>(null);
-  const pRef    = useRef(p);
+interface RenderContext {
+  PIXI: typeof Pixi;
+  app: Pixi.Application;
+  layers: LayerManager;
+}
 
-  const animRef = useRef({
-    revealProg:[0,0,0] as number[], revealKey:'',
-    taxiProg:0, taxiAngle:0, taxiTrail:[] as {x:number;y:number}[],
-    cars:[] as TrafficCar[], incKey:'',
-    hoverNode:null as {r:number;c:number}|null,
-    t:0,
+const CAR_COLORS = [0xef4444, 0x3b82f6, 0x22c55e, 0xf97316, 0xa855f7, 0x06b6d4];
+
+export default function MapCanvas(props: MapCanvasProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const contextRef = useRef<RenderContext | null>(null);
+  const propsRef = useRef(props);
+  const animationRef = useRef({
+    revealProgress: [] as number[],
+    routeKey: '',
+    taxiProgress: 0,
+    taxiAngle: 0,
+    taxiTrail: [] as Point[],
+    cars: [] as TrafficCar[],
+    incidentKey: '',
+    hoverNode: null as { r: number; c: number } | null,
+    clock: 0,
   });
 
-  pRef.current = p;
+  propsRef.current = props;
 
-  // Sincroniza el avance del taxi
   useEffect(() => {
-    animRef.current.taxiProg = p.taxiProgress;
-    if (p.taxiProgress === 0) { animRef.current.taxiTrail = []; animRef.current.taxiAngle = 0; }
-  }, [p.taxiProgress]);
+    animationRef.current.taxiProgress = props.taxiProgress;
+    if (props.taxiProgress === 0) {
+      animationRef.current.taxiTrail = [];
+      animationRef.current.taxiAngle = 0;
+    }
+  }, [props.taxiProgress]);
 
-  // Reinicia animacion cuando cambian rutas
-  const rKey = p.routes.map(r => r.cost).join(',');
-  if (rKey !== animRef.current.revealKey) {
-    animRef.current.revealProg = [0,0,0];
-    animRef.current.revealKey = rKey;
-  }
+  useEffect(() => {
+    resetRouteReveal();
+    redrawStatic();
+  }, [props.routes, props.incidents, props.originH, props.originV, props.destH, props.destV, props.theme]);
 
-  useEffect(() => { if (ctxRef.current) redrawStatic(); });
-
-  // Monta PIXI una sola vez
   useEffect(() => {
     if (!hostRef.current) return;
     let alive = true;
-    (async () => {
+    let cleanupContextMenu: (() => void) | undefined;
+
+    async function mount() {
       const PIXI = await import('pixi.js');
       if (!alive || !hostRef.current) return;
 
+      const theme = MAP_THEMES[propsRef.current.theme];
       const app = new PIXI.Application({
-        width: CW, height: CH,
-        backgroundColor: C.bg,
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+        backgroundColor: theme.background,
         antialias: true,
         resolution: Math.min(window.devicePixelRatio || 1, 2),
         autoDensity: true,
       });
-      hostRef.current!.appendChild(app.view as HTMLCanvasElement);
-      app.stage.eventMode = 'static';
-      app.stage.hitArea = new PIXI.Rectangle(0, 0, CW, CH);
-
-      const layers: any[] = [];
-      for (let i = 0; i < 11; i++) {
-        const c = new PIXI.Container();
-        app.stage.addChild(c);
-        layers.push(c);
-      }
-      ctxRef.current = { PIXI, app, layers };
-
-      app.stage.on('pointermove', (e: any) => {
-        animRef.current.hoverNode = nearestNode(e.global.x, e.global.y);
-        drawHover();
-      });
-      app.stage.on('pointerleave', () => { animRef.current.hoverNode = null; drawHover(); });
 
       const canvas = app.view as HTMLCanvasElement;
-      canvas.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        const rect = canvas.getBoundingClientRect();
-        const cx   = (e.clientX - rect.left) * (CW / rect.width);
-        const cy   = (e.clientY - rect.top)  * (CH / rect.height);
-        const node = nearestNode(cx, cy);
-        if (node) pRef.current.onContextMenu(node.r, node.c, e.clientX, e.clientY);
+      hostRef.current.appendChild(canvas);
+      app.stage.eventMode = 'static';
+      app.stage.hitArea = new PIXI.Rectangle(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      const layers = new LayerManager(app.stage, () => new PIXI.Container());
+      contextRef.current = { PIXI, app, layers };
+
+      app.stage.on('pointermove', (event: Pixi.FederatedPointerEvent) => {
+        animationRef.current.hoverNode = nearestNode(event.global.x, event.global.y);
+        drawHover();
       });
+      app.stage.on('pointerleave', () => {
+        animationRef.current.hoverNode = null;
+        drawHover();
+      });
+
+      const onContextMenu = (event: MouseEvent) => {
+        event.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (CANVAS_WIDTH / rect.width);
+        const y = (event.clientY - rect.top) * (CANVAS_HEIGHT / rect.height);
+        const node = nearestNode(x, y);
+        if (node) propsRef.current.onContextMenu(node.r, node.c, event.clientX, event.clientY);
+      };
+
+      canvas.addEventListener('contextmenu', onContextMenu);
+      cleanupContextMenu = () => canvas.removeEventListener('contextmenu', onContextMenu);
 
       redrawStatic();
 
-      app.ticker.add((delta: number) => {
-        const anim = animRef.current;
-        const cp   = pRef.current;
-        anim.t += delta * 0.04;
+      app.ticker.add((delta) => {
+        const animation = animationRef.current;
+        const current = propsRef.current;
+        animation.clock += delta * 0.045;
+        drawAnimatedTraffic(delta);
+        drawSearchAnimation();
+        drawRouteReveal(delta);
 
-        // Recrea autos si cambian incidencias
-        const incKey = cp.incidents.map(i => `${i.type}:${i.hIdx}:${i.vIdx}`).join('|');
-        if (incKey !== anim.incKey) { anim.incKey = incKey; initCars(cp.incidents); }
-
-        // Anima aparicion de rutas
-        let dirty = false;
-        for (let i = 0; i < 3; i++) {
-          if (i < cp.routes.length && anim.revealProg[i] < 1) {
-            anim.revealProg[i] = Math.min(1, anim.revealProg[i] + delta * 0.025);
-            dirty = true;
-          }
+        if (current.isPlaying) {
+          animation.taxiProgress = Math.min(1, animation.taxiProgress + delta * 0.0022 * current.playSpeed);
+          current.onTaxiProgress(animation.taxiProgress);
+          if (animation.taxiProgress >= 1) current.onTaxiDone();
         }
-        if (dirty) drawRoutes();
 
-        // Mueve autos de trafico
-        for (const car of anim.cars) car.progress = (car.progress + delta * car.speed) % 1;
-        if (anim.cars.length) drawTraffic();
-
-        // Mueve taxi
-        if (cp.isPlaying) {
-          anim.taxiProg = Math.min(1, anim.taxiProg + delta * 0.0022 * cp.playSpeed);
-          cp.onTaxiProgress(anim.taxiProg);
-          if (anim.taxiProg >= 1) cp.onTaxiDone();
-        }
         drawTaxi();
         drawMarkers();
       });
-    })();
-    return () => { alive = false; ctxRef.current?.app.destroy(true); ctxRef.current = null; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }
+
+    mount();
+
+    return () => {
+      alive = false;
+      cleanupContextMenu?.();
+      const context = contextRef.current;
+      context?.layers.clearAll();
+      context?.app.destroy(true, { children: true, texture: true, baseTexture: true });
+      contextRef.current = null;
+    };
   }, []);
 
-  // Helpers de dibujo
-  function layer(i: number) {
-    const ctx = ctxRef.current;
-    if (!ctx) return null;
-    ctx.layers[i]?.removeChildren();
-    return ctx.layers[i];
+  function theme() {
+    return MAP_THEMES[propsRef.current.theme];
+  }
+
+  function resetRouteReveal() {
+    const key = props.routes.map((route) => `${route.id}:${route.path.join('-')}:${route.cost}`).join('|');
+    const animation = animationRef.current;
+    if (key !== animation.routeKey) {
+      animation.revealProgress = props.routes.map(() => 0);
+      animation.routeKey = key;
+      animation.taxiProgress = 0;
+      animation.taxiTrail = [];
+    }
+  }
+
+  function pointsFor(route: Route): Point[] {
+    return route.path.map((id) => {
+      const { r, c } = nrc(id);
+      return { x: nodeX(c), y: nodeY(r) };
+    });
   }
 
   function redrawStatic() {
+    const context = contextRef.current;
+    if (!context) return;
+    context.app.renderer.background.color = theme().background;
     drawBackground();
     drawGrid();
-    drawIncidentHalos();
+    drawEvents();
+    drawSearchAnimation();
     drawRoutes();
     drawMarkers();
     drawLabels();
     drawHover();
+    syncTrafficCars();
   }
 
-  // Dibuja fondo
   function drawBackground() {
-    const ctx = ctxRef.current; const con = layer(L.BG); if (!ctx || !con) return;
-    const { PIXI } = ctx;
-    const g = new PIXI.Graphics();
-    g.beginFill(C.bg); g.drawRect(0, 0, CW, CH); g.endFill();
-    con.addChild(g);
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('background');
+    const graphic = new context.PIXI.Graphics();
+    graphic.beginFill(theme().background);
+    graphic.drawRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    graphic.endFill();
+    layer.addChild(graphic);
   }
 
-  // ── City grid ──────────────────────────────────────────────────────────────
   function drawGrid() {
-    const ctx = ctxRef.current; const con = layer(L.GRID); if (!ctx || !con) return;
-    const { PIXI } = ctx;
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('grid');
+    const palette = theme();
 
-    // Street surface fill (entire grid area becomes streets)
-    const streets = new PIXI.Graphics();
-    streets.beginFill(C.street);
-    streets.drawRoundedRect(MOFF, MOFF, GRID_W, GRID_W, 4);
+    const streets = new context.PIXI.Graphics();
+    streets.beginFill(palette.street);
+    streets.drawRoundedRect(MAP_OFFSET, MAP_OFFSET, GRID_SIZE, GRID_SIZE, 6);
     streets.endFill();
-    con.addChild(streets);
+    layer.addChild(streets);
 
-    // City blocks on top — they're the "solid" parts
-    const blocks = new PIXI.Graphics();
+    const blocks = new context.PIXI.Graphics();
     for (let r = 0; r < NROWS - 1; r++) {
       for (let c = 0; c < NCOLS - 1; c++) {
-        const bx = MOFF + c * STEP + STREET;
-        const by = MOFF + r * STEP + STREET;
-        // Shadow (bottom-right offset)
-        blocks.beginFill(C.blockEdge);
-        blocks.drawRoundedRect(bx + 2, by + 2, BLOCK, BLOCK, 5);
+        const x = MAP_OFFSET + c * STEP + STREET;
+        const y = MAP_OFFSET + r * STEP + STREET;
+        blocks.beginFill(palette.blockEdge);
+        blocks.drawRoundedRect(x + 2, y + 2, BLOCK, BLOCK, 6);
         blocks.endFill();
-        // Block surface
-        blocks.beginFill(C.block);
-        blocks.drawRoundedRect(bx, by, BLOCK, BLOCK, 5);
+        blocks.beginFill(palette.block);
+        blocks.drawRoundedRect(x, y, BLOCK, BLOCK, 6);
         blocks.endFill();
       }
     }
-    con.addChild(blocks);
+    layer.addChild(blocks);
 
-    // Center dashes on streets (dashed centerline)
-    const dash = new PIXI.Graphics();
-    dash.lineStyle(1, C.streetLn, 0.4);
+    const markings = new context.PIXI.Graphics();
+    markings.lineStyle(1.5, palette.streetLine, 0.65);
     for (let r = 0; r < NROWS; r++) {
-      const y = ny(r);
+      const y = nodeY(r);
+      const direction = hDir(r);
       for (let c = 0; c < NCOLS - 1; c++) {
-        const x1 = nx(c) + 12, x2 = nx(c + 1) - 12;
-        const mid = (x1 + x2) / 2;
-        dash.moveTo(x1, y); dash.lineTo(mid - 3, y);
-        dash.moveTo(mid + 3, y); dash.lineTo(x2, y);
+        const x = (nodeX(c) + nodeX(c + 1)) / 2;
+        markings.moveTo(x - direction * 7, y);
+        markings.lineTo(x + direction * 7, y);
+        markings.moveTo(x + direction * 7, y);
+        markings.lineTo(x + direction * 3, y - 4);
+        markings.moveTo(x + direction * 7, y);
+        markings.lineTo(x + direction * 3, y + 4);
       }
     }
     for (let c = 0; c < NCOLS; c++) {
-      const x = nx(c);
+      const x = nodeX(c);
+      const direction = vDir(c);
       for (let r = 0; r < NROWS - 1; r++) {
-        const y1 = ny(r) + 12, y2 = ny(r + 1) - 12;
-        const mid = (y1 + y2) / 2;
-        dash.moveTo(x, y1); dash.lineTo(x, mid - 3);
-        dash.moveTo(x, mid + 3); dash.lineTo(x, y2);
+        const y = (nodeY(r) + nodeY(r + 1)) / 2;
+        markings.moveTo(x, y - direction * 7);
+        markings.lineTo(x, y + direction * 7);
+        markings.moveTo(x, y + direction * 7);
+        markings.lineTo(x - 4, y + direction * 3);
+        markings.moveTo(x, y + direction * 7);
+        markings.lineTo(x + 4, y + direction * 3);
       }
     }
-    con.addChild(dash);
+    layer.addChild(markings);
 
-    // Direction tick arrows
-    const ticks = new PIXI.Graphics();
-    ticks.lineStyle(1.5, C.arrowDir, 0.65);
+    const nodes = new context.PIXI.Graphics();
     for (let r = 0; r < NROWS; r++) {
-      const d = hDir(r);
-      for (let c = 0; c < NCOLS - 1; c++) {
-        const xm = (nx(c) + nx(c + 1)) / 2, ym = ny(r);
-        ticks.moveTo(xm - d*6, ym); ticks.lineTo(xm + d*6, ym);
-        ticks.moveTo(xm + d*6, ym); ticks.lineTo(xm + d*3, ym - 3);
-        ticks.moveTo(xm + d*6, ym); ticks.lineTo(xm + d*3, ym + 3);
+      for (let c = 0; c < NCOLS; c++) {
+        nodes.beginFill(palette.node, 0.8);
+        nodes.drawCircle(nodeX(c), nodeY(r), 3);
+        nodes.endFill();
       }
     }
-    for (let c = 0; c < NCOLS; c++) {
-      const d = vDir(c);
-      for (let r = 0; r < NROWS - 1; r++) {
-        const xm = nx(c), ym = (ny(r) + ny(r + 1)) / 2;
-        ticks.moveTo(xm, ym - d*6); ticks.lineTo(xm, ym + d*6);
-        ticks.moveTo(xm, ym + d*6); ticks.lineTo(xm - 3, ym + d*3);
-        ticks.moveTo(xm, ym + d*6); ticks.lineTo(xm + 3, ym + d*3);
-      }
-    }
-    con.addChild(ticks);
-
-    // Intersection rounded squares
-    const nodes = new PIXI.Graphics();
-    for (let r = 0; r < NROWS; r++) for (let c = 0; c < NCOLS; c++) {
-      nodes.beginFill(C.interDot);
-      nodes.drawRoundedRect(nx(c) - 3, ny(r) - 3, 6, 6, 2);
-      nodes.endFill();
-    }
-    con.addChild(nodes);
+    layer.addChild(nodes);
   }
 
-  // ── Incident halos ─────────────────────────────────────────────────────────
-  function drawIncidentHalos() {
-    const ctx = ctxRef.current; const con = layer(L.INC_HALO); if (!ctx || !con) return;
-    const { PIXI } = ctx;
-    for (const inc of pRef.current.incidents) {
-      if (inc.type === 'none') continue;
-      const col = inc.type === 'block' ? C.iBlock : inc.type === 'traffic' ? C.iTraffic : C.iRadar;
-      const halo = new PIXI.Graphics();
-      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-        const rr = inc.hIdx + dr, cc = inc.vIdx + dc;
-        if (rr < 0 || rr >= NROWS || cc < 0 || cc >= NCOLS) continue;
-        halo.beginFill(col, dr === 0 && dc === 0 ? 0.18 : 0.07);
-        halo.drawRect(MOFF + cc * STEP, MOFF + rr * STEP, STEP, STEP);
-        halo.endFill();
-      }
-      con.addChild(halo);
+  function drawEvents() {
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('events');
 
-      if (inc.type !== 'traffic') {
-        const cx = nx(inc.vIdx), cy = ny(inc.hIdx);
-        const ring = new PIXI.Graphics();
-        ring.lineStyle(2.5, col, 0.6);
-        ring.drawCircle(cx, cy, 13);
-        con.addChild(ring);
-        const dot = new PIXI.Graphics();
-        dot.beginFill(col); dot.drawCircle(cx, cy, 8); dot.endFill();
-        con.addChild(dot);
-        const sym = inc.type === 'block' ? '✕' : '◎';
-        const txt = new PIXI.Text(sym, {fontFamily:'Nunito,sans-serif',fontSize:10,fill:0xffffff,fontWeight:'bold'});
-        txt.anchor.set(0.5); txt.position.set(cx, cy + 0.5);
-        con.addChild(txt);
-      }
+    for (const event of propsRef.current.incidents.filter((item) => item.type !== 'none')) {
+      const config = URBAN_EVENT_CONFIG[event.type];
+      const radius = Math.min(event.radius ?? config.radius, MAX_EVENT_RADIUS);
+      const color = Number(config.color.replace('#', '0x'));
+      const cx = nodeX(event.vIdx);
+      const cy = nodeY(event.hIdx);
+
+      const halo = new context.PIXI.Graphics();
+      const coverageSize = STEP * (radius * 2 + 1);
+      halo.beginFill(color, radius === 0 ? 0.12 : 0.16);
+      halo.drawRoundedRect(cx - coverageSize / 2, cy - coverageSize / 2, coverageSize, coverageSize, 10);
+      halo.endFill();
+      halo.lineStyle(1.5, color, 0.34);
+      halo.drawRoundedRect(cx - coverageSize / 2, cy - coverageSize / 2, coverageSize, coverageSize, 10);
+      layer.addChild(halo);
+
+      const marker = new context.PIXI.Graphics();
+      marker.lineStyle(2, 0xffffff, 0.85);
+      marker.beginFill(color, 0.95);
+      marker.drawCircle(cx, cy, 11);
+      marker.endFill();
+      layer.addChild(marker);
+
+      const text = new context.PIXI.Text(config.icon, {
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fontSize: 10,
+        fontWeight: '800',
+        fill: 0xffffff,
+      });
+      text.anchor.set(0.5);
+      text.position.set(cx, cy + 0.5);
+      layer.addChild(text);
     }
   }
 
-  // ── Animated traffic cars ─────────────────────────────────────────────────
-  function drawTraffic() {
-    const ctx = ctxRef.current; const con = layer(L.TRAFFIC); if (!ctx || !con) return;
-    const { PIXI } = ctx;
-    const anim = animRef.current;
-    const incs  = pRef.current.incidents.filter(i => i.type === 'traffic');
-    if (!incs.length) return;
-
-    // Pulsing icon at center
-    const pulse = new PIXI.Graphics();
-    for (const inc of incs) {
-      const cx = nx(inc.vIdx), cy = ny(inc.hIdx);
-      const r  = 11 + Math.sin(anim.t * 2.5) * 1.5;
-      const a  = 0.55 + Math.abs(Math.sin(anim.t * 2.5)) * 0.3;
-      pulse.lineStyle(2.5, C.iTraffic, a);
-      pulse.drawCircle(cx, cy, r);
-      pulse.beginFill(C.iTraffic, 0.85 + Math.sin(anim.t * 2) * 0.1);
-      pulse.drawCircle(cx, cy, 7);
-      pulse.endFill();
-    }
-    con.addChild(pulse);
-
-    // Cars
-    const g = new PIXI.Graphics();
-    for (const car of anim.cars) {
-      const t   = car.progress;
-      const px  = car.x1 + t * (car.x2 - car.x1);
-      const py  = car.y1 + t * (car.y2 - car.y1);
-      const brk = 0.5 + 0.45 * Math.abs(Math.sin(anim.t * 3.5 + car.progress * 7));
-
-      // ─────────────────────────────────────────────────────────────────────
-      // SPRITE SLOT — swap the Graphics block below with your sprite:
-      //
-      //   const spr = new PIXI.Sprite(carTexture);
-      //   spr.width  = car.isH ? 18 : 11;
-      //   spr.height = car.isH ? 11 : 18;
-      //   spr.anchor.set(0.5);
-      //   spr.x = px + (car.isH ? 0 : car.laneOff);
-      //   spr.y = py + (car.isH ? car.laneOff : 0);
-      //   spr.rotation = car.isH ? (car.x2>car.x1 ? 0 : Math.PI) : (car.y2>car.y1 ? Math.PI/2 : -Math.PI/2);
-      //   con.addChild(spr);   ← add to con, not g
-      // ─────────────────────────────────────────────────────────────────────
-
-      if (car.isH) {
-        const ox = 0, oy = car.laneOff;
-        const fd = car.x2 > car.x1 ? 1 : -1;
-        // Body
-        g.beginFill(car.color, 0.92);
-        g.drawRoundedRect(px - 9 + ox, py - 5 + oy, 18, 10, 3);
-        g.endFill();
-        // Windshield
-        g.beginFill(0x90caf9, 0.65);
-        g.drawRoundedRect(px + (fd === 1 ? 2 : -8) + ox, py - 4 + oy, 6, 8, 1.5);
-        g.endFill();
-        // Roof tint
-        g.beginFill(0x000000, 0.1);
-        g.drawRoundedRect(px - 5 + ox, py - 4 + oy, 10, 8, 2);
-        g.endFill();
-        // Brake lights
-        g.beginFill(0xf44336, brk * 0.9);
-        g.drawCircle(px - (fd === 1 ? 9 : -9) + ox, py - 3 + oy, 1.8);
-        g.drawCircle(px - (fd === 1 ? 9 : -9) + ox, py + 3 + oy, 1.8);
-        g.endFill();
-        // Headlights
-        g.beginFill(0xfff9c4, 0.8);
-        g.drawCircle(px + (fd === 1 ? 9 : -9) + ox, py - 3 + oy, 1.5);
-        g.drawCircle(px + (fd === 1 ? 9 : -9) + ox, py + 3 + oy, 1.5);
-        g.endFill();
-      } else {
-        const ox = car.laneOff, oy = 0;
-        const fd = car.y2 > car.y1 ? 1 : -1;
-        g.beginFill(car.color, 0.92);
-        g.drawRoundedRect(px - 5 + ox, py - 9 + oy, 10, 18, 3);
-        g.endFill();
-        g.beginFill(0x90caf9, 0.65);
-        g.drawRoundedRect(px - 4 + ox, py + (fd === 1 ? 2 : -8) + oy, 8, 6, 1.5);
-        g.endFill();
-        g.beginFill(0x000000, 0.1);
-        g.drawRoundedRect(px - 4 + ox, py - 5 + oy, 8, 10, 2);
-        g.endFill();
-        g.beginFill(0xf44336, brk * 0.9);
-        g.drawCircle(px - 3 + ox, py - (fd === 1 ? 9 : -9) + oy, 1.8);
-        g.drawCircle(px + 3 + ox, py - (fd === 1 ? 9 : -9) + oy, 1.8);
-        g.endFill();
-        g.beginFill(0xfff9c4, 0.8);
-        g.drawCircle(px - 3 + ox, py + (fd === 1 ? 9 : -9) + oy, 1.5);
-        g.drawCircle(px + 3 + ox, py + (fd === 1 ? 9 : -9) + oy, 1.5);
-        g.endFill();
+  function drawRouteReveal(delta: number) {
+    const animation = animationRef.current;
+    let dirty = false;
+    for (let i = 0; i < propsRef.current.routes.length; i++) {
+      if ((animation.revealProgress[i] ?? 0) < 1) {
+        animation.revealProgress[i] = Math.min(1, (animation.revealProgress[i] ?? 0) + delta * 0.025);
+        dirty = true;
       }
     }
-    con.addChild(g);
+    if (dirty) drawRoutes();
   }
 
-  // ── Routes ────────────────────────────────────────────────────────────────
+  function drawSearchAnimation() {
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('analysis');
+    if (!propsRef.current.isCalculating) return;
+
+    const palette = theme();
+    const clock = animationRef.current.clock;
+    const origin = { x: nodeX(propsRef.current.originV), y: nodeY(propsRef.current.originH) };
+    const destination = { x: nodeX(propsRef.current.destV), y: nodeY(propsRef.current.destH) };
+    const progress = (clock * 0.55) % 1;
+    const paths: Point[][] = buildSearchPreviewPaths(origin, destination);
+
+    paths.forEach((points, index) => {
+      const color = palette.routeColors[index % palette.routeColors.length];
+      const alpha = 0.28 - index * 0.045;
+      const glow = new context.PIXI.Graphics();
+      glow.lineStyle(18 - index * 2, color, Math.max(0.08, alpha * 0.35), 0.5, true);
+      drawPartialPath(glow, points, Math.min(1, progress + index * 0.14));
+      layer.addChild(glow);
+
+      const line = new context.PIXI.Graphics();
+      line.lineStyle(7 - Math.min(index, 2), color, Math.max(0.16, alpha), 0.5, true);
+      drawPartialPath(line, points, Math.min(1, progress + index * 0.14));
+      layer.addChild(line);
+    });
+
+    const pulse = new context.PIXI.Graphics();
+    const radius = 16 + Math.sin(clock * 5) * 5;
+    pulse.lineStyle(2, palette.routeColors[0], 0.55);
+    pulse.drawCircle(origin.x, origin.y, radius);
+    pulse.lineStyle(2, palette.routeColors[1], 0.45);
+    pulse.drawCircle(destination.x, destination.y, radius * 0.9);
+    layer.addChild(pulse);
+  }
+
   function drawRoutes() {
-    const ctx = ctxRef.current; if (!ctx) return;
-    const { PIXI } = ctx;
-    const { routes } = pRef.current;
-    const { revealProg } = animRef.current;
-    // Widths: thicker + straight (no perpendicular offset)
-    const LWS = [11, 9, 8];
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('routes');
+    const palette = theme();
 
-    routes.forEach((route, ri) => {
-      const con = layer(L.R0 + ri); if (!con) return;
-      const col  = ROUTE_COLORS[ri];
-      const lw   = LWS[ri];
-      const prog = Math.min(revealProg[ri] ?? 0, 1);
-      if (prog <= 0) return;
+    propsRef.current.routes.forEach((route, index) => {
+      const points = pointsFor(route);
+      const progress = animationRef.current.revealProgress[index] ?? 1;
+      const color = palette.routeColors[index % palette.routeColors.length];
+      const width = index === 0 ? 15 : 11;
+      const alpha = index === 0 ? 0.96 : 0.82;
 
-      const pts = route.path.map(id => { const { r, c } = nrc(id); return { x: nx(c), y: ny(r) }; });
+      const outline = new context.PIXI.Graphics();
+      outline.lineStyle(width + 6, 0xffffff, propsRef.current.theme === 'dark' ? 0.22 : 0.85, 0.5, true);
+      drawPartialPath(outline, points, progress);
+      layer.addChild(outline);
 
-      // 1) White outline — makes the line pop off the map background
-      const outline = new PIXI.Graphics();
-      outline.lineStyle(lw + 6, 0xffffff, 0.85, 0.5, true);
-      drawPartial(outline, pts, prog, 0);
-      con.addChild(outline);
+      const glow = new context.PIXI.Graphics();
+      glow.lineStyle(width + 14, color, 0.22, 0.5, true);
+      drawPartialPath(glow, points, progress);
+      layer.addChild(glow);
 
-      // 2) Soft color glow
-      const glow = new PIXI.Graphics();
-      glow.lineStyle(lw + 10, col, 0.18, 0.5, true);
-      drawPartial(glow, pts, prog, 0);
-      con.addChild(glow);
-
-      // 3) Solid colored line
-      const line = new PIXI.Graphics();
-      line.lineStyle(lw, col, 0.95, 0.5, true);
-      drawPartial(line, pts, prog, 0);
-      con.addChild(line);
-
-      // 4) Filled arrowhead chevrons at each segment midpoint
-      if (prog > 0.12) {
-        const n  = Math.floor(prog * (pts.length - 1));
-        const ar = new PIXI.Graphics();
-        for (let i = 0; i < n; i++) {
-          const p1 = pts[i], p2 = pts[i + 1];
-          const dx = p2.x - p1.x, dy = p2.y - p1.y;
-          const len = Math.sqrt(dx * dx + dy * dy); if (len < 1) continue;
-          const ux = dx / len, uy = dy / len;
-          const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
-          const sz = 6;
-          // Filled white triangle (outline)
-          ar.beginFill(0xffffff, 0.9);
-          ar.drawPolygon([
-            mx + ux * sz,           my + uy * sz,
-            mx - ux * sz - uy * sz * 0.7, my - uy * sz + ux * sz * 0.7,
-            mx - ux * sz + uy * sz * 0.7, my - uy * sz - ux * sz * 0.7,
-          ]);
-          ar.endFill();
-          // Filled color triangle on top (slightly smaller)
-          ar.beginFill(col, 1);
-          ar.drawPolygon([
-            mx + ux * (sz - 1),           my + uy * (sz - 1),
-            mx - ux * (sz - 1) - uy * (sz - 1) * 0.7, my - uy * (sz - 1) + ux * (sz - 1) * 0.7,
-            mx - ux * (sz - 1) + uy * (sz - 1) * 0.7, my - uy * (sz - 1) - ux * (sz - 1) * 0.7,
-          ]);
-          ar.endFill();
-        }
-        con.addChild(ar);
-      }
-
-      // 5) Leading ball during animation
-      if (prog < 1) {
-        const pos = pathAt(pts, prog);
-        const ld = new PIXI.Graphics();
-        ld.beginFill(0xffffff, 0.9); ld.drawCircle(pos.x, pos.y, lw * 0.7 + 3); ld.endFill();
-        ld.beginFill(col, 1);        ld.drawCircle(pos.x, pos.y, lw * 0.7);     ld.endFill();
-        con.addChild(ld);
-      }
+      const line = new context.PIXI.Graphics();
+      line.lineStyle(width, color, alpha, 0.5, true);
+      drawPartialPath(line, points, progress);
+      layer.addChild(line);
     });
   }
 
-  // ── O/D Markers ──────────────────────────────────────────────────────────
   function drawMarkers() {
-    const ctx = ctxRef.current; const con = layer(L.MARKERS); if (!ctx || !con) return;
-    const { PIXI } = ctx;
-    const { originH, originV, destH, destV } = pRef.current;
-    const t = animRef.current.t;
-
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('markers');
+    const palette = theme();
     const items = [
-      { r: originH, c: originV, fill: C.originFill, label: 'O' },
-      { r: destH,   c: destV,   fill: C.destFill,   label: 'D' },
+      { r: propsRef.current.originH, c: propsRef.current.originV, label: 'O', color: palette.origin },
+      { r: propsRef.current.destH, c: propsRef.current.destV, label: 'D', color: palette.destination },
     ];
 
-    for (const m of items) {
-      const x = nx(m.c), y = ny(m.r);
-      const pulse = 1 + Math.sin(t * 1.8 + m.r + m.c) * 0.1;
+    for (const item of items) {
+      const x = nodeX(item.c);
+      const y = nodeY(item.r);
+      const ring = new context.PIXI.Graphics();
+      ring.lineStyle(2, item.color, 0.5);
+      ring.drawCircle(x, y, 18);
+      layer.addChild(ring);
 
-      // Outer pulse ring
-      const ring = new PIXI.Graphics();
-      ring.lineStyle(2, m.fill, 0.25 + Math.abs(Math.sin(t * 1.8)) * 0.2);
-      ring.drawCircle(x, y, 18 * pulse);
-      con.addChild(ring);
+      const marker = new context.PIXI.Graphics();
+      marker.beginFill(item.color);
+      marker.drawCircle(x, y, 10);
+      marker.endFill();
+      marker.lineStyle(2, 0xffffff, 0.9);
+      marker.drawCircle(x, y, 10);
+      layer.addChild(marker);
 
-      // White shadow
-      const shadow = new PIXI.Graphics();
-      shadow.beginFill(m.fill, 0.15);
-      shadow.drawCircle(x, y, 14);
-      shadow.endFill();
-      con.addChild(shadow);
-
-      // Circle
-      const circle = new PIXI.Graphics();
-      circle.beginFill(m.fill); circle.drawCircle(x, y, 10); circle.endFill();
-      circle.lineStyle(2.5, C.white); circle.drawCircle(x, y, 10);
-      con.addChild(circle);
-
-      // Label
-      const txt = new PIXI.Text(m.label, {
-        fontFamily: 'Nunito, sans-serif', fontSize: 10,
-        fontWeight: '800', fill: C.white,
+      const text = new context.PIXI.Text(item.label, {
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fontSize: 10,
+        fontWeight: '800',
+        fill: 0xffffff,
       });
-      txt.anchor.set(0.5, 0.5); txt.position.set(x, y + 0.5);
-      con.addChild(txt);
+      text.anchor.set(0.5);
+      text.position.set(x, y + 0.5);
+      layer.addChild(text);
     }
   }
 
-  // ── Axis labels ───────────────────────────────────────────────────────────
   function drawLabels() {
-    const ctx = ctxRef.current; const con = layer(L.LABELS); if (!ctx || !con) return;
-    const { PIXI } = ctx;
-    const st = { fontFamily: 'JetBrains Mono, monospace', fontSize: 10, fill: C.textMuted, fontWeight: '500' };
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('labels');
+    const style = {
+      fontFamily: 'JetBrains Mono, monospace',
+      fontSize: 10,
+      fill: theme().text,
+      fontWeight: '500' as const,
+    };
+
     for (let r = 0; r < NROWS; r++) {
-      const t = new PIXI.Text(`${2*(r+1)}`, st);
-      t.anchor.set(1, 0.5); t.position.set(MOFF - 10, ny(r));
-      con.addChild(t);
+      const text = new context.PIXI.Text(`${2 * (r + 1)}`, style);
+      text.anchor.set(1, 0.5);
+      text.position.set(MAP_OFFSET - 10, nodeY(r));
+      layer.addChild(text);
     }
     for (let c = 0; c < NCOLS; c++) {
-      const t = new PIXI.Text(`${2*c+1}`, st);
-      t.anchor.set(0.5, 1); t.position.set(nx(c), MOFF - 10);
-      con.addChild(t);
+      const text = new context.PIXI.Text(`${2 * c + 1}`, style);
+      text.anchor.set(0.5, 1);
+      text.position.set(nodeX(c), MAP_OFFSET - 10);
+      layer.addChild(text);
     }
   }
 
-  // ── Hover ──────────────────────────────────────────────────────────────────
   function drawHover() {
-    const ctx = ctxRef.current; const con = layer(L.HOVER); if (!ctx || !con) return;
-    const { PIXI } = ctx;
-    const hn = animRef.current.hoverNode;
-    if (!hn) return;
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('hover');
+    const hovered = animationRef.current.hoverNode;
+    if (!hovered) return;
 
-    const x = nx(hn.c), y = ny(hn.r);
-    const ring = new PIXI.Graphics();
-    ring.lineStyle(2.5, C.r2, 0.7); ring.drawCircle(x, y, 12);
-    ring.beginFill(C.r2, 0.12); ring.drawCircle(x, y, 12); ring.endFill();
-    con.addChild(ring);
+    const x = nodeX(hovered.c);
+    const y = nodeY(hovered.r);
+    const routeColor = theme().routeColors[2];
 
-    const lbl = `H-${2*(hn.r+1)} · V-${2*hn.c+1}`;
-    const txt = new PIXI.Text(lbl, {
-      fontFamily: 'Nunito, sans-serif', fontSize: 11,
-      fontWeight: '700', fill: 0xffffff, padding: 4,
+    const ring = new context.PIXI.Graphics();
+    ring.lineStyle(2, routeColor, 0.8);
+    ring.beginFill(routeColor, 0.12);
+    ring.drawCircle(x, y, 13);
+    ring.endFill();
+    layer.addChild(ring);
+
+    const label = `H-${2 * (hovered.r + 1)} / V-${2 * hovered.c + 1}`;
+    const text = new context.PIXI.Text(label, {
+      fontFamily: 'Inter, system-ui, sans-serif',
+      fontSize: 11,
+      fontWeight: '700',
+      fill: 0xffffff,
+      padding: 4,
     });
-    txt.anchor.set(0.5, 1); txt.position.set(x, y - 16);
-    const bg = new PIXI.Graphics();
-    bg.beginFill(0x5c3d2e, 0.88);
-    bg.drawRoundedRect(txt.x - txt.width/2 - 6, txt.y - txt.height - 3, txt.width + 12, txt.height + 6, 6);
+    text.anchor.set(0.5, 1);
+    text.position.set(x, y - 16);
+
+    const bg = new context.PIXI.Graphics();
+    bg.beginFill(theme().tooltip, 0.9);
+    bg.drawRoundedRect(text.x - text.width / 2 - 7, text.y - text.height - 4, text.width + 14, text.height + 8, 6);
     bg.endFill();
-    con.addChild(bg); con.addChild(txt);
+    layer.addChild(bg);
+    layer.addChild(text);
   }
 
-  // ── Taxi ──────────────────────────────────────────────────────────────────
-  function drawTaxi() {
-    const ctx = ctxRef.current; const con = layer(L.TAXI); if (!ctx || !con) return;
-    const { PIXI } = ctx;
-    const { routes, selectedRoute } = pRef.current;
-    const anim = animRef.current;
-    const route = routes[selectedRoute];
-    if (!route || anim.taxiProg <= 0) return;
+  function syncTrafficCars() {
+    const key = propsRef.current.incidents.map((event) => `${event.type}:${event.hIdx}:${event.vIdx}:${event.radius}:${event.severity}`).join('|');
+    const animation = animationRef.current;
+    if (key === animation.incidentKey) return;
+    animation.incidentKey = key;
+    animation.cars = buildTrafficCars(propsRef.current.incidents);
+  }
 
-    const pts = route.path.map(id => { const { r, c } = nrc(id); return { x: nx(c), y: ny(r) }; });
-    const pos  = pathAt(pts, anim.taxiProg);
-    anim.taxiAngle = lerpAngle(anim.taxiAngle, angleAt(pts, anim.taxiProg), 0.16);
-    const ang  = anim.taxiAngle;
+  function drawAnimatedTraffic(delta: number) {
+    const context = contextRef.current;
+    if (!context) return;
+    syncTrafficCars();
+    const layer = context.layers.clear('traffic');
+    const cars = animationRef.current.cars;
+    if (!cars.length) return;
 
-    // Trail
-    if (pRef.current.isPlaying || (anim.taxiProg > 0 && anim.taxiProg < 1)) {
-      anim.taxiTrail.unshift({ x: pos.x, y: pos.y });
-      if (anim.taxiTrail.length > 36) anim.taxiTrail.pop();
+    const graphics = new context.PIXI.Graphics();
+    for (const car of cars) {
+      car.progress = (car.progress + delta * car.speed) % 1;
+      const x = car.x1 + car.progress * (car.x2 - car.x1);
+      const y = car.y1 + car.progress * (car.y2 - car.y1);
+      graphics.beginFill(car.color, 0.92);
+      if (car.horizontal) {
+        graphics.drawRoundedRect(x - 8, y - 4 + car.laneOffset, 16, 8, 3);
+      } else {
+        graphics.drawRoundedRect(x - 4 + car.laneOffset, y - 8, 8, 16, 3);
+      }
+      graphics.endFill();
     }
-    const rc = ROUTE_COLORS[selectedRoute];
-    const trail = new PIXI.Graphics();
-    anim.taxiTrail.forEach((pt, i) => {
-      trail.beginFill(rc, (1 - i / anim.taxiTrail.length) * 0.28);
-      trail.drawCircle(pt.x, pt.y, 2.8 * (1 - i / anim.taxiTrail.length) + 0.5);
+    layer.addChild(graphics);
+  }
+
+  function drawTaxi() {
+    const context = contextRef.current;
+    if (!context) return;
+    const layer = context.layers.clear('taxi');
+    const route = propsRef.current.routes[propsRef.current.selectedRoute];
+    const animation = animationRef.current;
+    if (!route || animation.taxiProgress <= 0) return;
+
+    const points = pointsFor(route);
+    const position = pathAt(points, animation.taxiProgress);
+    animation.taxiAngle = lerpAngle(animation.taxiAngle, angleAt(points, animation.taxiProgress), 0.16);
+
+    if (propsRef.current.isPlaying || animation.taxiProgress < 1) {
+      animation.taxiTrail.unshift(position);
+      if (animation.taxiTrail.length > 34) animation.taxiTrail.pop();
+    }
+
+    const routeColor = theme().routeColors[propsRef.current.selectedRoute] ?? theme().routeColors[0];
+    const trail = new context.PIXI.Graphics();
+    animation.taxiTrail.forEach((point, index) => {
+      trail.beginFill(routeColor, (1 - index / animation.taxiTrail.length) * 0.25);
+      trail.drawCircle(point.x, point.y, 3);
       trail.endFill();
     });
-    con.addChild(trail);
+    layer.addChild(trail);
 
-    // Headlight glow
-    const hl = new PIXI.Graphics();
-    const hx = pos.x + Math.cos(ang) * 17, hy = pos.y + Math.sin(ang) * 17;
-    hl.beginFill(0xfff9c4, 0.18); hl.drawCircle(hx, hy, 20); hl.endFill();
-    hl.beginFill(0xfff9c4, 0.08); hl.drawCircle(hx, hy, 32); hl.endFill();
-    con.addChild(hl);
+    const taxi = new context.PIXI.Container();
+    taxi.position.set(position.x, position.y);
+    taxi.rotation = animation.taxiAngle;
 
-    // Dibujo simple del taxi
+    const body = new context.PIXI.Graphics();
+    body.beginFill(theme().taxi);
+    body.drawRoundedRect(-14, -8, 28, 16, 4);
+    body.endFill();
+    body.beginFill(theme().taxiRoof);
+    body.drawRoundedRect(-7, -6, 14, 12, 3);
+    body.endFill();
+    body.beginFill(0x111827, 0.28);
+    body.drawRoundedRect(4, -5, 7, 10, 2);
+    body.endFill();
+    body.beginFill(0xffffff, 0.95);
+    body.drawCircle(14, -5, 2);
+    body.drawCircle(14, 5, 2);
+    body.endFill();
+    taxi.addChild(body);
+    layer.addChild(taxi);
+  }
 
-    const taxi = new PIXI.Container();
-    taxi.position.set(pos.x, pos.y);
-    taxi.rotation = ang;
+  return <div ref={hostRef} className="map-canvas-host" style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }} />;
+}
 
-    const b = new PIXI.Graphics();
-    // Body
-    b.beginFill(C.taxiBody); b.drawRoundedRect(-14, -9, 28, 18, 5); b.endFill();
-    // Roof
-    b.beginFill(C.taxiRoof); b.drawRoundedRect(-10, -7, 20, 14, 3); b.endFill();
-    // Front windshield
-    b.beginFill(C.taxiGlass, 0.7); b.drawRoundedRect(4, -6, 8, 12, 2); b.endFill();
-    b.lineStyle(1, C.taxiGlass, 0.5); b.moveTo(8, -6); b.lineTo(8, 6);
-    b.lineStyle(0);
-    // Rear window
-    b.beginFill(C.taxiGlass, 0.5); b.drawRoundedRect(-12, -5, 5, 10, 1.5); b.endFill();
-    // Letrero del taxi
-    b.beginFill(0xffffff, 0.95); b.drawRoundedRect(-5, -14, 10, 6, 2); b.endFill();
-    b.beginFill(C.iTraffic, 0.7); b.drawRoundedRect(-3, -13, 6, 4, 1); b.endFill();
-    // Checker stripe
-    for (let i = -6; i <= 4; i += 2) {
-      b.beginFill(0x333333, 0.18);
-      b.drawRect(i, i % 4 === 0 ? -1 : 0, 2, i % 4 === 0 ? 2 : -2);
-      b.endFill();
+function drawPartialPath(graphics: Pixi.Graphics, points: Point[], progress: number): void {
+  const segmentCount = points.length - 1;
+  if (segmentCount <= 0) return;
+  const clampedProgress = Math.max(0, Math.min(1, progress));
+  graphics.moveTo(points[0].x, points[0].y);
+  const target = clampedProgress * segmentCount;
+  const fullSegments = Math.floor(target);
+  const fraction = target - fullSegments;
+
+  for (let i = 0; i < fullSegments; i++) {
+    graphics.lineTo(points[i + 1].x, points[i + 1].y);
+  }
+  if (fullSegments < segmentCount) {
+    const start = points[fullSegments];
+    const end = points[fullSegments + 1];
+    graphics.lineTo(start.x + fraction * (end.x - start.x), start.y + fraction * (end.y - start.y));
+  }
+}
+
+function buildSearchPreviewPaths(origin: Point, destination: Point): Point[][] {
+  const midX = (origin.x + destination.x) / 2;
+  const midY = (origin.y + destination.y) / 2;
+  return [
+    [origin, { x: destination.x, y: origin.y }, destination],
+    [origin, { x: origin.x, y: destination.y }, destination],
+    [origin, { x: midX, y: origin.y }, { x: midX, y: destination.y }, destination],
+    [origin, { x: origin.x, y: midY }, { x: destination.x, y: midY }, destination],
+  ];
+}
+
+function buildTrafficCars(incidents: Incident[]): TrafficCar[] {
+  const cars: TrafficCar[] = [];
+
+  for (const event of incidents) {
+    if (!['traffic', 'congestion', 'accident', 'signal'].includes(event.type)) continue;
+    const segments: Array<Omit<TrafficCar, 'progress' | 'speed' | 'laneOffset' | 'color'>> = [];
+
+    for (let dc = -1; dc <= 0; dc++) {
+      const c1 = event.vIdx + dc;
+      const c2 = event.vIdx + dc + 1;
+      if (c1 < 0 || c2 >= NCOLS) continue;
+      const direction = hDir(event.hIdx);
+      segments.push(direction === 1
+        ? { x1: nodeX(c1), y1: nodeY(event.hIdx), x2: nodeX(c2), y2: nodeY(event.hIdx), horizontal: true }
+        : { x1: nodeX(c2), y1: nodeY(event.hIdx), x2: nodeX(c1), y2: nodeY(event.hIdx), horizontal: true });
     }
-    // Wheels
-    [[-9,-10],[9,-10],[-9,10],[9,10]].forEach(([wx,wy]) => {
-      b.beginFill(C.taxiWheel); b.drawCircle(wx, wy, 4.5); b.endFill();
-      b.beginFill(0xaaaaaa); b.drawCircle(wx, wy, 2); b.endFill();
+
+    for (let dr = -1; dr <= 0; dr++) {
+      const r1 = event.hIdx + dr;
+      const r2 = event.hIdx + dr + 1;
+      if (r1 < 0 || r2 >= NROWS) continue;
+      const direction = vDir(event.vIdx);
+      segments.push(direction === 1
+        ? { x1: nodeX(event.vIdx), y1: nodeY(r1), x2: nodeX(event.vIdx), y2: nodeY(r2), horizontal: false }
+        : { x1: nodeX(event.vIdx), y1: nodeY(r2), x2: nodeX(event.vIdx), y2: nodeY(r1), horizontal: false });
+    }
+
+    segments.forEach((segment, segmentIndex) => {
+      for (let i = 0; i < 3; i++) {
+        cars.push({
+          ...segment,
+          progress: (i / 3 + segmentIndex * 0.13) % 1,
+          speed: 0.0012 + i * 0.00025,
+          laneOffset: (i - 1) * 3,
+          color: CAR_COLORS[(i + segmentIndex) % CAR_COLORS.length],
+        });
+      }
     });
-    // Headlights
-    b.beginFill(C.taxiLight, 0.95); b.drawCircle(14, -6, 2.5); b.drawCircle(14, 6, 2.5); b.endFill();
-    // Taillights
-    b.beginFill(0xf44336, 0.9); b.drawCircle(-14, -6, 2); b.drawCircle(-14, 6, 2); b.endFill();
-
-    taxi.addChild(b);
-    con.addChild(taxi);
   }
 
-  // ─── Helpers ─────────────────────────────────────────────────────────────
-  function initCars(incidents: Incident[]) {
-    const cars: TrafficCar[] = [];
-    for (const inc of incidents) {
-      if (inc.type !== 'traffic') continue;
-      const segs: Omit<TrafficCar, 'progress'|'speed'|'laneOff'|'color'>[] = [];
-      for (let dc = -1; dc <= 0; dc++) {
-        const c1 = inc.vIdx + dc, c2 = inc.vIdx + dc + 1;
-        if (c1 < 0 || c2 >= NCOLS) continue;
-        const d = hDir(inc.hIdx);
-        segs.push(d===1
-          ?{x1:nx(c1),y1:ny(inc.hIdx),x2:nx(c2),y2:ny(inc.hIdx),isH:true}
-          :{x1:nx(c2),y1:ny(inc.hIdx),x2:nx(c1),y2:ny(inc.hIdx),isH:true});
-      }
-      for (let dr = -1; dr <= 0; dr++) {
-        const r1 = inc.hIdx + dr, r2 = inc.hIdx + dr + 1;
-        if (r1 < 0 || r2 >= NROWS) continue;
-        const d = vDir(inc.vIdx);
-        segs.push(d===1
-          ?{x1:nx(inc.vIdx),y1:ny(r1),x2:nx(inc.vIdx),y2:ny(r2),isH:false}
-          :{x1:nx(inc.vIdx),y1:ny(r2),x2:nx(inc.vIdx),y2:ny(r1),isH:false});
-      }
-      for (const seg of segs) {
-        for (let i = 0; i < 4; i++) {
-          cars.push({
-            ...seg,
-            progress: (i / 4 + Math.random() * 0.15) % 1,
-            speed: 0.0016 + Math.random() * 0.0014,
-            laneOff: (Math.random() - 0.5) * 6,
-            color: CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
-          });
-        }
-      }
-    }
-    animRef.current.cars = cars;
-  }
-
-  return (
-    <div ref={hostRef} className="map-canvas-host" style={{ width: CW, height: CH }} />
-  );
-}
-
-// ─── Pure geometry ─────────────────────────────────────────────────────────
-function nearestNode(px:number, py:number): {r:number,c:number}|null {
-  let best = Infinity, br = -1, bc = -1;
-  for (let r = 0; r < NROWS; r++) for (let c = 0; c < NCOLS; c++) {
-    const d = Math.hypot(px - nx(c), py - ny(r));
-    if (d < best) { best = d; br = r; bc = c; }
-  }
-  return best < STEP * 0.42 ? { r:br, c:bc } : null;
-}
-
-function applyOff(pts:{x:number;y:number}[], i:number, perp:number) {
-  const p = pts[i], next = pts[Math.min(i+1, pts.length-1)];
-  const h = Math.abs(p.y - next.y) < 0.1;
-  return { x: p.x + (h ? 0 : perp), y: p.y + (h ? perp : 0) };
-}
-
-function drawPartial(g:any, pts:{x:number;y:number}[], prog:number, perp:number) {
-  const n = pts.length - 1; if (n <= 0) return;
-  const p0 = applyOff(pts, 0, perp); g.moveTo(p0.x, p0.y);
-  const target = prog * n, full = Math.floor(target), frac = target - full;
-  for (let i = 0; i < full; i++) { const p = applyOff(pts,i+1,perp); g.lineTo(p.x,p.y); }
-  if (full < n) {
-    const a = applyOff(pts,full,perp), b = applyOff(pts,full+1,perp);
-    g.lineTo(a.x + frac*(b.x-a.x), a.y + frac*(b.y-a.y));
-  }
-}
-
-function pathAt(pts:{x:number;y:number}[], prog:number) {
-  const n = pts.length - 1; if (n <= 0) return pts[0];
-  const t = Math.min(prog * n, n - 0.001), i = Math.floor(t), f = t - i;
-  return { x: pts[i].x + f*(pts[i+1].x-pts[i].x), y: pts[i].y + f*(pts[i+1].y-pts[i].y) };
-}
-
-function angleAt(pts:{x:number;y:number}[], prog:number) {
-  const n = pts.length - 1; if (n <= 0) return 0;
-  const i = Math.min(Math.floor(prog * n), n - 1);
-  return Math.atan2(pts[i+1].y - pts[i].y, pts[i+1].x - pts[i].x);
-}
-
-function lerpAngle(a:number, b:number, t:number) {
-  let d = b - a;
-  while (d > Math.PI)  d -= 2*Math.PI;
-  while (d < -Math.PI) d += 2*Math.PI;
-  return a + d * t;
+  return cars;
 }

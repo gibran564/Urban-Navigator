@@ -1,8 +1,6 @@
 import type { Graph, Route } from './types';
 import { nrc, MIN_EDGE_SEC, pathCost } from './graph';
 
-// ─── Binary Min-Heap (O(log n) push/pop) ─────────────────────────────────────
-
 class MinHeap {
   private h: [number, number][] = [];
 
@@ -41,12 +39,6 @@ class MinHeap {
   }
 }
 
-// ─── A* with admissible Manhattan heuristic ───────────────────────────────────
-
-/**
- * Admissible heuristic: Manhattan distance × MIN_EDGE_SEC.
- * Because real edge costs ≥ MIN_EDGE_SEC, this never overestimates.
- */
 function heuristic(u: number, end: number): number {
   const a = nrc(u), b = nrc(end);
   return (Math.abs(a.r - b.r) + Math.abs(a.c - b.c)) * MIN_EDGE_SEC;
@@ -79,11 +71,11 @@ export function astar(
     closed.add(u);
     if (u === end) break;
 
-    for (const { to, cost } of (graph[u] ?? [])) {
+    for (const { to, cost, weight } of (graph[u] ?? [])) {
       if (forbiddenEdges.has(`${u}-${to}`)) continue;
       if (forbiddenNodes.has(to) && to !== end) continue;
 
-      const ng = (g.get(u) ?? Infinity) + cost;
+      const ng = (g.get(u) ?? Infinity) + (weight ?? cost);
       if (ng < (g.get(to) ?? Infinity)) {
         g.set(to, ng);
         prev.set(to, u);
@@ -105,16 +97,6 @@ export function astar(
   return { path, cost };
 }
 
-// ─── Yen's K-Shortest Paths ───────────────────────────────────────────────────
-
-/**
- * Yen's algorithm to find K shortest loopless paths.
- *
- * Improvements over the basic version:
- *   1. Uses A* (with heuristic) internally instead of Dijkstra.
- *   2. Forbids root-path nodes (not just spur edges) to ensure looplessness.
- *   3. Recalculates spur path cost via exact pathCost to avoid accumulation errors.
- */
 export function yenK(graph: Graph, start: number, end: number, K = 3): Route[] {
   const r0 = astar(graph, start, end);
   if (!r0) return [];
@@ -130,7 +112,6 @@ export function yenK(graph: Graph, start: number, end: number, K = 3): Route[] {
       const rootPath = prevRoute.path.slice(0, i + 1);
       const rootSig  = rootPath.join(',');
 
-      // Block edges already used at this spur by previously found routes
       const forbEdges = new Set<string>();
       for (const route of A) {
         if (route.path.slice(0, i + 1).join(',') === rootSig) {
@@ -138,7 +119,6 @@ export function yenK(graph: Graph, start: number, end: number, K = 3): Route[] {
         }
       }
 
-      // Block all nodes in the root path (except spur) to prevent loops
       const forbNodes = new Set<number>(rootPath.slice(0, -1));
 
       const spurRes = astar(graph, spurNode, end, forbEdges, forbNodes);
