@@ -1,6 +1,7 @@
 'use client';
 import type { Route } from '@/lib/types';
 import { fmtTime } from '@/lib/utils';
+import { Pause, Play, RotateCcw } from 'lucide-react';
 
 interface Props {
   routes:Route[]; selectedRoute:number; isPlaying:boolean;
@@ -18,7 +19,7 @@ const PLAY_BG = ['#3aa857','#3b82f6','#e8742a'];
 export default function PlayHUD({ routes, selectedRoute, isPlaying, playSpeed, taxiProgress,
   onSelectRoute, onPlay, onPause, onReset, onSpeedCycle }: Props) {
   if (!routes.length) return null;
-  const route = routes[selectedRoute];
+  const route = routes[selectedRoute] ?? routes[0];
   const done  = taxiProgress >= 1;
   const barColor = ['var(--green)','var(--blue)','var(--orange)'][selectedRoute];
 
@@ -29,7 +30,7 @@ export default function PlayHUD({ routes, selectedRoute, isPlaying, playSpeed, t
         {routes.map((r,i)=>(
           <button key={i} className={`hud-tab ${selectedRoute===i?TAB_CLASS[i]:''}`}
             onClick={()=>onSelectRoute(i)} title={`${ROUTE_NAMES[i]} · ${fmtTime(r.cost)}`}>
-            {ROUTE_NAMES[i]}
+            {i === 0 ? 'Recomendada' : ROUTE_NAMES[i]}
           </button>
         ))}
       </div>
@@ -42,7 +43,7 @@ export default function PlayHUD({ routes, selectedRoute, isPlaying, playSpeed, t
           <span className="hud-elapsed" style={{color:barColor}}>
             {fmtTime(Math.round(route.cost * taxiProgress))}
           </span>
-          <span className="hud-total">de {fmtTime(route.cost)}</span>
+          <span className="hud-total">de {route.totalMinutes ?? Math.round(route.cost / 60)} min</span>
         </div>
         <div className="hud-track">
           <div className="hud-fill" style={{width:`${taxiProgress*100}%`,background:barColor}}/>
@@ -53,13 +54,13 @@ export default function PlayHUD({ routes, selectedRoute, isPlaying, playSpeed, t
 
       {/* Controls */}
       <div className="hud-controls">
-        <button className="hud-icon-btn" onClick={onReset} title="Reiniciar">↺</button>
+        <button className="hud-icon-btn" onClick={onReset} title="Reiniciar"><RotateCcw size={15} /></button>
 
         <button className="hud-play-btn"
           style={{background: PLAY_BG[selectedRoute]}}
           onClick={done ? onReset : isPlaying ? onPause : onPlay}
-          title={done?'Reiniciar':isPlaying?'Pausar':'¡Dale!'}>
-          {done ? '↺' : isPlaying ? '⏸' : '▶'}
+          title={done?'Reiniciar':isPlaying?'Pausar':'Iniciar'}>
+          {done ? <RotateCcw size={16} /> : isPlaying ? <Pause size={16} /> : <Play size={16} />}
         </button>
 
         <button className="hud-speed" onClick={onSpeedCycle} title="Cambiar velocidad">

@@ -1,14 +1,16 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import type { Incident, IncidentType, Route } from '@/lib/types';
 import { buildGraph, NROWS, NCOLS, nid } from '@/lib/graph';
-import { yenK } from '@/lib/pathfinding';
+import { calculateUrbanRoutes } from '@/engine/routing';
 import IncidentPanel from '@/components/IncidentPanel';
 import RouteResults  from '@/components/RouteResults';
 import PlayHUD       from '@/components/PlayHUD';
 import ContextMenu, { type CtxState } from '@/components/ContextMenu';
+import type { ThemeName } from '@/renderer/mapTheme';
+import { Calculator, Map, MapPin, Moon, RotateCcw, Sun } from 'lucide-react';
 
 const MapCanvas = dynamic(() => import('@/components/MapCanvas'), { ssr: false });
 
@@ -28,28 +30,65 @@ export default function Page() {
   const [selRoute,   setSelRoute  ] = useState(0);
   const [taxiProg,   setTaxiProg  ] = useState(0);
   const [ctx,        setCtx       ] = useState<CtxState>(CLOSED);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [theme, setTheme] = useState<ThemeName>('dark');
 
   const graph = useMemo(() => buildGraph(incidents), [incidents]);
 
   const resetTaxi   = () => { setIsPlaying(false); setTaxiProg(0); };
-  const clearRoutes = useCallback(() => { setRoutes([]); setError(''); setIsPlaying(false); setTaxiProg(0); }, []);
+  const clearRoutes = useCallback(() => {
+    setRoutes([]);
+    setError('');
+    setIsPlaying(false);
+    setTaxiProg(0);
+    setSelRoute(0);
+  }, []);
 
-  const calcRoutes = () => {
-    setError(''); resetTaxi();
+  useEffect(() => {
+    const storedTheme = window.localStorage.getItem('urban-navigator-theme');
+    if (storedTheme === 'light' || storedTheme === 'dark') setTheme(storedTheme);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem('urban-navigator-theme', theme);
+  }, [theme]);
+
+  const calcRoutes = async () => {
+    setError('');
+    resetTaxi();
+    setSelRoute(0);
+
     const s = nid(originH, originV), e = nid(destH, destV);
-    if (s === e) { setRoutes([]); setError('El origen y el destino son el mismo punto.'); return; }
-    const res = yenK(graph, s, e, 3);
-    setRoutes(res);
-    if (!res.length) setError('No hay ruta posible. Revisa los bloqueos.');
+    if (s === e) {
+      setRoutes([]);
+      setError('El origen y el destino son el mismo punto.');
+      return;
+    }
+
+    setIsCalculating(true);
+    try {
+      const [result] = await Promise.all([
+        calculateUrbanRoutes({ incidents, originH, originV, destH, destV, limit: 12 }),
+        new Promise((resolve) => setTimeout(resolve, 650)),
+      ]);
+      setRoutes(result.routes.slice(0, 3));
+      if (!result.routes.length) setError(result.explanation ?? 'No hay ruta posible. Revisa bloqueos y cierres.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo ejecutar la inferencia.';
+      setRoutes([]);
+      setError(message);
+    } finally {
+      setIsCalculating(false);
+    }
   };
 
   const fullReset = () => {
     setIncidents([]); setRoutes([]); setError('');
     setOriginH(0); setOriginV(0); setDestH(NROWS-1); setDestV(NCOLS-1);
-    resetTaxi(); setCtx(CLOSED);
+    setSelRoute(0); resetTaxi(); setCtx(CLOSED);
   };
 
-  // Context menu
   const onCtxMenu = useCallback((r:number, c:number, sx:number, sy:number) => {
     setIncidents(inc => {
       const has = inc.some(i => i.hIdx===r && i.vIdx===c && i.type!=='none');
@@ -82,28 +121,30 @@ export default function Page() {
 
   return (
     <div className="app-layout">
-      {/* ── Sidebar ──────────────────────────────────────────── */}
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="brand-row">
-            <div className="brand-icon-wrap">🗺️</div>
+            <div className="brand-icon-wrap">UN</div>
             <div className="brand-text-wrap">
               <div className="brand-title">Urban Navigator</div>
-              <div className="brand-tagline">Busca el mejor camino · A* + Yen&apos;s K</div>
+              <div className="brand-tagline">Control urbano tactico · Tau Prolog</div>
             </div>
           </div>
+          <button className="theme-toggle" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}>
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            {theme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
+          </button>
         </div>
 
         <div className="sidebar-scroll">
-          {/* OD */}
           <div className="section-card">
             <div className="section-title">
-              <span className="section-title-icon">📍</span> Origen y Destino
+              <MapPin size={14} /> Origen y Destino
             </div>
             <div className="od-grid">
               <div className="od-field">
                 <div className="od-field-label">
-                  <div className="od-badge origin">O</div> Origen H
+                <div className="od-badge origin">O</div> Origen H
                 </div>
                 <select className="od-select" value={originH} onChange={e=>{setOriginH(+e.target.value);clearRoutes();}}>
                   {hOpts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
@@ -135,7 +176,6 @@ export default function Page() {
               </div>
             </div>
             <div className="hint-box">
-              <span className="hint-icon">🖱️</span>
               <div className="hint-text">
                 <strong>Clic derecho</strong> en cualquier intersección del mapa para fijar puntos o añadir incidencias rápidamente.
               </div>
@@ -148,24 +188,25 @@ export default function Page() {
 
           {/* Action buttons */}
           <div className="action-row">
-            <button className="btn-calc" onClick={calcRoutes}>
-              ⚡ Calcular rutas
+            <button className="btn-calc" onClick={calcRoutes} disabled={isCalculating}>
+              <Calculator size={16} />
+              {isCalculating ? 'Analizando...' : 'Calcular rutas'}
             </button>
             <button className="btn-secondary" onClick={fullReset} title="Reiniciar todo">
-              ↺
+              <RotateCcw size={15} />
             </button>
           </div>
 
           {/* Legend */}
           <div className="section-card">
-            <div className="section-title"><span className="section-title-icon">🗺️</span> Leyenda</div>
+            <div className="section-title"><Map size={14} /> Leyenda</div>
             <div className="legend-wrap">
               {([
-                ['#e0d4c0','Calle'],['#f5eddb','Manzana'],
-                ['#e03c3c','Bloqueo 🚧'],['#e8742a','Tráfico 🚦'],
-                ['#38bdf8','Radar 📷'],['#3aa857','Ruta 1'],
-                ['#3b82f6','Ruta 2'],['#e8742a','Ruta 3'],
-                ['#fdd835','Taxi 🚕'],
+                ['#1f2937','Calle'],['#0f172a','Manzana'],
+                ['#dc2626','Cierre vial'],['#f97316','Congestion'],
+                ['#a855f7','Manifestacion'],['#2dd4bf','Ruta 1'],
+                ['#60a5fa','Ruta 2'],['#fb923c','Ruta 3'],
+                ['#facc15','Taxi'],
               ] as [string,string][]).map(([bg,lbl])=>(
                 <div key={lbl} className="leg-row">
                   <div className="leg-dot" style={{background:bg, border:'1.5px solid rgba(0,0,0,0.1)'}}/>{lbl}
@@ -185,6 +226,8 @@ export default function Page() {
             destH={destH} destV={destV}
             isPlaying={isPlaying} playSpeed={playSpeed}
             selectedRoute={selRoute} taxiProgress={taxiProg}
+            theme={theme}
+            isCalculating={isCalculating}
             onContextMenu={onCtxMenu}
             onTaxiProgress={onTaxiProg}
             onTaxiDone={onTaxiDone}
@@ -203,7 +246,7 @@ export default function Page() {
           )}
         </div>
 
-        <RouteResults routes={routes} graph={graph} error={error} />
+        <RouteResults routes={routes} graph={graph} error={error} isCalculating={isCalculating} />
       </div>
 
       <ContextMenu state={ctx} onClose={()=>setCtx(CLOSED)}

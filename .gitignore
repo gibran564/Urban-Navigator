@@ -1,1 +1,3 @@
 node_modules
+.next
+.codex-devserver*.log

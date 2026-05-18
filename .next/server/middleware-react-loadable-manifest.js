@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST='{"app\\\\page.tsx -> @/components/MapCanvas":{"id":2725,"files":["static/chunks/725.07c38143c1121d45.js"]},"components\\\\MapCanvas.tsx -> pixi.js":{"id":691,"files":["static/chunks/691.bf3cecfda7f4768e.js"]}}';
+self.__REACT_LOADABLE_MANIFEST='{"app\\\\page.tsx -> @/components/MapCanvas":{"id":4269,"files":["static/chunks/269.05ebbd9061436622.js"]},"components\\\\MapCanvas.tsx -> pixi.js":{"id":691,"files":["static/chunks/691.80f2e3c9edf6ff6f.js"]}}';
