@@ -253,28 +253,28 @@ export default function MapCanvas(props: MapCanvasProps) {
     markings.lineStyle(1.5, palette.streetLine, 0.65);
     for (let r = 0; r < NROWS; r++) {
       const y = nodeY(r);
-      const direction = hDir(r);
+      const hDirVal = hDir(r);
       for (let c = 0; c < NCOLS - 1; c++) {
         const x = (nodeX(c) + nodeX(c + 1)) / 2;
-        markings.moveTo(x - direction * 7, y);
-        markings.lineTo(x + direction * 7, y);
-        markings.moveTo(x + direction * 7, y);
-        markings.lineTo(x + direction * 3, y - 4);
-        markings.moveTo(x + direction * 7, y);
-        markings.lineTo(x + direction * 3, y + 4);
+        markings.moveTo(x - hDirVal * 7, y);
+        markings.lineTo(x + hDirVal * 7, y);
+        markings.moveTo(x + hDirVal * 7, y);
+        markings.lineTo(x + hDirVal * 3, y - 4);
+        markings.moveTo(x + hDirVal * 7, y);
+        markings.lineTo(x + hDirVal * 3, y + 4);
       }
     }
     for (let c = 0; c < NCOLS; c++) {
       const x = nodeX(c);
-      const direction = vDir(c);
+      const vDirVal = vDir(c);
       for (let r = 0; r < NROWS - 1; r++) {
         const y = (nodeY(r) + nodeY(r + 1)) / 2;
-        markings.moveTo(x, y - direction * 7);
-        markings.lineTo(x, y + direction * 7);
-        markings.moveTo(x, y + direction * 7);
-        markings.lineTo(x - 4, y + direction * 3);
-        markings.moveTo(x, y + direction * 7);
-        markings.lineTo(x + 4, y + direction * 3);
+        markings.moveTo(x, y - vDirVal * 7);
+        markings.lineTo(x, y + vDirVal * 7);
+        markings.moveTo(x, y + vDirVal * 7);
+        markings.lineTo(x - 4, y + vDirVal * 3);
+        markings.moveTo(x, y + vDirVal * 7);
+        markings.lineTo(x + 4, y + vDirVal * 3);
       }
     }
     layer.addChild(markings);
@@ -632,8 +632,8 @@ function buildTrafficCars(incidents: Incident[]): TrafficCar[] {
       const c1 = event.vIdx + dc;
       const c2 = event.vIdx + dc + 1;
       if (c1 < 0 || c2 >= NCOLS) continue;
-      const direction = hDir(event.hIdx);
-      segments.push(direction === 1
+      const hDirVal = hDir(event.hIdx);
+      segments.push(hDirVal === 1
         ? { x1: nodeX(c1), y1: nodeY(event.hIdx), x2: nodeX(c2), y2: nodeY(event.hIdx), horizontal: true }
         : { x1: nodeX(c2), y1: nodeY(event.hIdx), x2: nodeX(c1), y2: nodeY(event.hIdx), horizontal: true });
     }
@@ -642,8 +642,8 @@ function buildTrafficCars(incidents: Incident[]): TrafficCar[] {
       const r1 = event.hIdx + dr;
       const r2 = event.hIdx + dr + 1;
       if (r1 < 0 || r2 >= NROWS) continue;
-      const direction = vDir(event.vIdx);
-      segments.push(direction === 1
+      const vDirVal = vDir(event.vIdx);
+      segments.push(vDirVal === 1
         ? { x1: nodeX(event.vIdx), y1: nodeY(r1), x2: nodeX(event.vIdx), y2: nodeY(r2), horizontal: false }
         : { x1: nodeX(event.vIdx), y1: nodeY(r2), x2: nodeX(event.vIdx), y2: nodeY(r1), horizontal: false });
     }

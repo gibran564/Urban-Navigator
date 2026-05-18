@@ -45,10 +45,10 @@ function heuristic(u: number, end: number): number {
 }
 
 /**
- * A* shortest path on a directed graph.
+ * A* para buscar la ruta mas corta en el grafo.
  *
- * @param forbiddenEdges  Set of "u-v" string keys to skip
- * @param forbiddenNodes  Set of node ids to skip (except destination)
+ * @param forbiddenEdges  calles que se saltan, tipo "u-v"
+ * @param forbiddenNodes  nodos que se evitan, menos el destino
  */
 export function astar(
   graph: Graph,
@@ -87,7 +87,7 @@ export function astar(
   const cost = g.get(end);
   if (cost === undefined || !isFinite(cost)) return null;
 
-  // Reconstruct path
+  // reconstruye la ruta
   const path: number[] = [];
   let cur: number | undefined = end;
   while (cur !== undefined) {

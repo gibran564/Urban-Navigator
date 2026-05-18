@@ -182,11 +182,11 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Incidents */}
+          {/* incidencias */}
           <IncidentPanel incidents={incidents}
             onChange={inc=>{setIncidents(inc);clearRoutes();}}/>
 
-          {/* Action buttons */}
+          {/* botones */}
           <div className="action-row">
             <button className="btn-calc" onClick={calcRoutes} disabled={isCalculating}>
               <Calculator size={16} />
@@ -197,7 +197,7 @@ export default function Page() {
             </button>
           </div>
 
-          {/* Legend */}
+          {/* leyenda */}
           <div className="section-card">
             <div className="section-title"><Map size={14} /> Leyenda</div>
             <div className="legend-wrap">
@@ -217,7 +217,7 @@ export default function Page() {
         </div>
       </aside>
 
-      {/* ── Map ──────────────────────────────────────────────── */}
+      {/* mapa */}
       <div className="main-area">
         <div className="map-wrap">
           <MapCanvas

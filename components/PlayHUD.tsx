@@ -25,7 +25,7 @@ export default function PlayHUD({ routes, selectedRoute, isPlaying, playSpeed, t
 
   return (
     <div className="play-hud">
-      {/* Route tabs */}
+      {/* tabs de rutas */}
       <div className="hud-route-tabs">
         {routes.map((r,i)=>(
           <button key={i} className={`hud-tab ${selectedRoute===i?TAB_CLASS[i]:''}`}
@@ -37,7 +37,7 @@ export default function PlayHUD({ routes, selectedRoute, isPlaying, playSpeed, t
 
       <div className="hud-sep"/>
 
-      {/* Progress */}
+      {/* avance del taxi */}
       <div className="hud-progress">
         <div className="hud-time-row">
           <span className="hud-elapsed" style={{color:barColor}}>
@@ -52,7 +52,7 @@ export default function PlayHUD({ routes, selectedRoute, isPlaying, playSpeed, t
 
       <div className="hud-sep"/>
 
-      {/* Controls */}
+      {/* controles */}
       <div className="hud-controls">
         <button className="hud-icon-btn" onClick={onReset} title="Reiniciar"><RotateCcw size={15} /></button>
 

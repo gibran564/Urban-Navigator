@@ -14,7 +14,7 @@ export const nrc = (id: number) => ({ r: Math.floor(id / NCOLS), c: id % NCOLS }
 export const hName = (r: number) => `Av. ${2 * (r + 1)}`;
 export const vName = (c: number) => `C. ${2 * c + 1}`;
 
-/** 1 = east/south, -1 = west/north */
+/** 1 = este/sur, -1 = oeste/norte */
 export const hDir = (r: number) => r % 2 === 0 ? 1 : -1;
 export const vDir = (c: number) => c % 2 === 0 ? 1 : -1;
 
@@ -65,9 +65,9 @@ function graphEdge(
 }
 
 /**
- * Build adjacency list for the directed city grid.
- * Horizontal even rows go east; odd rows go west.
- * Vertical even cols go south; odd cols go north.
+ * arma la lista de calles con sentido
+ * filas pares van al este y las impares al oeste
+ * columnas pares van al sur y las impares al norte
  */
 interface BuildGraphOptions {
   avoidEventZones?: boolean;
@@ -79,11 +79,11 @@ export function buildGraph(incidents: Incident[], options: BuildGraphOptions = {
     for (let c = 0; c < NCOLS; c++)
       g[nid(r, c)] = [];
 
-  // Horizontal edges
+  // calles horizontales
   for (let r = 0; r < NROWS; r++) {
-    const d = hDir(r);
+    const hDirVal = hDir(r);
     for (let c = 0; c < NCOLS - 1; c++) {
-      if (d === 1) {
+      if (hDirVal === 1) {
         const cost = edgeCost(r, c, r, c + 1, incidents);
         if (isFinite(cost)) {
           const impact = edgeImpact(r, c, r, c + 1, incidents);
@@ -101,11 +101,11 @@ export function buildGraph(incidents: Incident[], options: BuildGraphOptions = {
     }
   }
 
-  // Vertical edges
+  // calles verticales
   for (let c = 0; c < NCOLS; c++) {
-    const d = vDir(c);
+    const vDirVal = vDir(c);
     for (let r = 0; r < NROWS - 1; r++) {
-      if (d === 1) {
+      if (vDirVal === 1) {
         const cost = edgeCost(r, c, r + 1, c, incidents);
         if (isFinite(cost)) {
           const impact = edgeImpact(r, c, r + 1, c, incidents);
@@ -126,7 +126,7 @@ export function buildGraph(incidents: Incident[], options: BuildGraphOptions = {
   return g;
 }
 
-/** Re-compute exact cost of a complete path through the graph */
+/** vuelve a calcular el costo de una ruta completa */
 export function pathCost(graph: Graph, path: number[]): number {
   let total = 0;
   for (let i = 0; i < path.length - 1; i++) {
