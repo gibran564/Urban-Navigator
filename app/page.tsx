@@ -50,8 +50,8 @@ export default function Page() {
   };
 
   // Menu con clic derecho
-  const alAbrirMenuContextual = useCallback((r:number, c:number, sx:number, sy:number) => {
-    setIncidencias(inc => {
+  const onCtxMenu = useCallback((r:number, c:number, sx:number, sy:number) => {
+    setIncidents(inc => {
       const has = inc.some(i => i.hIdx===r && i.vIdx===c && i.type!=='none');
       setEstadoMenu({ visible:true, r, c, screenX:sx, screenY:sy, hasIncident:has });
       return inc;
@@ -143,8 +143,8 @@ export default function Page() {
           </div>
 
           {/* Incidencias */}
-          <IncidentPanel incidents={incidencias}
-            onChange={inc=>{setIncidencias(inc);limpiarRutas();}}/>
+          <IncidentPanel incidents={incidents}
+            onChange={inc=>{setIncidents(inc);clearRoutes();}}/>
 
           {/* Botones */}
           <div className="action-row">
