@@ -101,15 +101,12 @@ html, body { height: 100%; background: var(--bg); color: var(--text);
 
 .brand-row { display: flex; align-items: center; gap: 10px; }
 .brand-icon-wrap {
-  width: 40px; height: 40px;
-  background: linear-gradient(135deg, #2dd4bf, #60a5fa);
+  width: 40px;
+  height: 40px;
   border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  font-weight: 800;
-  color: #06111f;
+  object-fit: cover;
   box-shadow: 0 8px 22px rgba(45,212,191,0.22);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   flex-shrink: 0;
 }
 .brand-text-wrap { display: flex; flex-direction: column; gap: 1px; }
