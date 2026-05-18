@@ -12,73 +12,73 @@ import ContextMenu, { type CtxState } from '@/components/ContextMenu';
 
 const MapCanvas = dynamic(() => import('@/components/MapCanvas'), { ssr: false });
 
-const SPEEDS  = [0.5, 1, 2, 4];
-const CLOSED: CtxState = { visible:false, r:0, c:0, screenX:0, screenY:0, hasIncident:false };
+const VELOCIDADES  = [0.5, 1, 2, 4];
+const MENU_CERRADO: CtxState = { visible:false, r:0, c:0, screenX:0, screenY:0, hasIncident:false };
 
 export default function Page() {
-  const [incidents,  setIncidents ] = useState<Incident[]>([]);
-  const [originH,    setOriginH   ] = useState(0);
-  const [originV,    setOriginV   ] = useState(0);
-  const [destH,      setDestH     ] = useState(NROWS - 1);
-  const [destV,      setDestV     ] = useState(NCOLS - 1);
-  const [routes,     setRoutes    ] = useState<Route[]>([]);
-  const [error,      setError     ] = useState('');
-  const [isPlaying,  setIsPlaying ] = useState(false);
-  const [playSpeed,  setPlaySpeed ] = useState(1);
-  const [selRoute,   setSelRoute  ] = useState(0);
-  const [taxiProg,   setTaxiProg  ] = useState(0);
-  const [ctx,        setCtx       ] = useState<CtxState>(CLOSED);
+  const [incidencias,  setIncidencias ] = useState<Incident[]>([]);
+  const [origenH,    setOrigenH   ] = useState(0);
+  const [origenV,    setOrigenV   ] = useState(0);
+  const [destinoH,      setDestinoH     ] = useState(NROWS - 1);
+  const [destinoV,      setDestinoV     ] = useState(NCOLS - 1);
+  const [rutas,     setRutas    ] = useState<Route[]>([]);
+  const [mensajeError,      setMensajeError     ] = useState('');
+  const [estaReproduciendo,  setEstaReproduciendo ] = useState(false);
+  const [velocidadReproduccion,  setVelocidadReproduccion ] = useState(1);
+  const [rutaSeleccionada,   setRutaSeleccionada  ] = useState(0);
+  const [progresoTaxi,   setProgresoTaxi  ] = useState(0);
+  const [estadoMenu,        setEstadoMenu       ] = useState<CtxState>(MENU_CERRADO);
 
-  const graph = useMemo(() => buildGraph(incidents), [incidents]);
+  const grafo = useMemo(() => buildGraph(incidencias), [incidencias]);
 
-  const resetTaxi   = () => { setIsPlaying(false); setTaxiProg(0); };
-  const clearRoutes = useCallback(() => { setRoutes([]); setError(''); setIsPlaying(false); setTaxiProg(0); }, []);
+  const reiniciarTaxi   = () => { setEstaReproduciendo(false); setProgresoTaxi(0); };
+  const limpiarRutas = useCallback(() => { setRutas([]); setMensajeError(''); setEstaReproduciendo(false); setProgresoTaxi(0); }, []);
 
-  const calcRoutes = () => {
-    setError(''); resetTaxi();
-    const s = nid(originH, originV), e = nid(destH, destV);
-    if (s === e) { setRoutes([]); setError('El origen y el destino son el mismo punto.'); return; }
-    const res = yenK(graph, s, e, 3);
-    setRoutes(res);
-    if (!res.length) setError('No hay ruta posible. Revisa los bloqueos.');
+  const calcularRutas = () => {
+    setMensajeError(''); reiniciarTaxi();
+    const s = nid(origenH, origenV), e = nid(destinoH, destinoV);
+    if (s === e) { setRutas([]); setMensajeError('El origen y el destino son el mismo punto.'); return; }
+    const res = yenK(grafo, s, e, 3);
+    setRutas(res);
+    if (!res.length) setMensajeError('No hay ruta posible. Revisa los bloqueos.');
   };
 
-  const fullReset = () => {
-    setIncidents([]); setRoutes([]); setError('');
-    setOriginH(0); setOriginV(0); setDestH(NROWS-1); setDestV(NCOLS-1);
-    resetTaxi(); setCtx(CLOSED);
+  const reinicioCompleto = () => {
+    setIncidencias([]); setRutas([]); setMensajeError('');
+    setOrigenH(0); setOrigenV(0); setDestinoH(NROWS-1); setDestinoV(NCOLS-1);
+    reiniciarTaxi(); setEstadoMenu(MENU_CERRADO);
   };
 
   // Menu con clic derecho
   const onCtxMenu = useCallback((r:number, c:number, sx:number, sy:number) => {
     setIncidents(inc => {
       const has = inc.some(i => i.hIdx===r && i.vIdx===c && i.type!=='none');
-      setCtx({ visible:true, r, c, screenX:sx, screenY:sy, hasIncident:has });
+      setEstadoMenu({ visible:true, r, c, screenX:sx, screenY:sy, hasIncident:has });
       return inc;
     });
   }, []);
 
-  const ctxOrigin = useCallback((r:number,c:number) => { setOriginH(r); setOriginV(c); clearRoutes(); }, [clearRoutes]);
-  const ctxDest   = useCallback((r:number,c:number) => { setDestH(r);   setDestV(c);   clearRoutes(); }, [clearRoutes]);
+  const menuPonerOrigen = useCallback((r:number,c:number) => { setOrigenH(r); setOrigenV(c); limpiarRutas(); }, [limpiarRutas]);
+  const menuPonerDestino   = useCallback((r:number,c:number) => { setDestinoH(r);   setDestinoV(c);   limpiarRutas(); }, [limpiarRutas]);
 
-  const ctxAddInc = useCallback((r:number,c:number,type:IncidentType) => {
-    setIncidents(prev => {
+  const menuAgregarIncidencia = useCallback((r:number,c:number,type:IncidentType) => {
+    setIncidencias(prev => {
       const filtered = prev.filter(i => !(i.hIdx===r && i.vIdx===c));
       return [...filtered, { id:crypto.randomUUID(), type, hIdx:r, vIdx:c }];
     });
-    clearRoutes();
-  }, [clearRoutes]);
+    limpiarRutas();
+  }, [limpiarRutas]);
 
-  const ctxRmInc = useCallback((r:number,c:number) => {
-    setIncidents(prev => prev.filter(i => !(i.hIdx===r && i.vIdx===c)));
-    clearRoutes();
-  }, [clearRoutes]);
+  const menuQuitarIncidencia = useCallback((r:number,c:number) => {
+    setIncidencias(prev => prev.filter(i => !(i.hIdx===r && i.vIdx===c)));
+    limpiarRutas();
+  }, [limpiarRutas]);
 
-  const onTaxiProg = useCallback((p:number) => setTaxiProg(p), []);
-  const onTaxiDone = useCallback(() => setIsPlaying(false), []);
+  const alCambiarProgresoTaxi = useCallback((p:number) => setProgresoTaxi(p), []);
+  const alTerminarTaxi = useCallback(() => setEstaReproduciendo(false), []);
 
-  const hOpts = Array.from({length:NROWS}, (_,r) => ({v:r, l:`H-${2*(r+1)}`}));
-  const vOpts = Array.from({length:NCOLS}, (_,c) => ({v:c, l:`V-${2*c+1}`}));
+  const opcionesH = Array.from({length:NROWS}, (_,r) => ({v:r, l:`H-${2*(r+1)}`}));
+  const opcionesV = Array.from({length:NCOLS}, (_,c) => ({v:c, l:`V-${2*c+1}`}));
 
   return (
     <div className="app-layout">
@@ -105,32 +105,32 @@ export default function Page() {
                 <div className="od-field-label">
                   <div className="od-badge origin">O</div> Origen H
                 </div>
-                <select className="od-select" value={originH} onChange={e=>{setOriginH(+e.target.value);clearRoutes();}}>
-                  {hOpts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                <select className="od-select" value={origenH} onChange={e=>{setOrigenH(+e.target.value);limpiarRutas();}}>
+                  {opcionesH.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                 </select>
               </div>
               <div className="od-field">
                 <div className="od-field-label">
                   <div className="od-badge origin">O</div> Origen V
                 </div>
-                <select className="od-select" value={originV} onChange={e=>{setOriginV(+e.target.value);clearRoutes();}}>
-                  {vOpts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                <select className="od-select" value={origenV} onChange={e=>{setOrigenV(+e.target.value);limpiarRutas();}}>
+                  {opcionesV.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                 </select>
               </div>
               <div className="od-field">
                 <div className="od-field-label">
                   <div className="od-badge dest">D</div> Destino H
                 </div>
-                <select className="od-select" value={destH} onChange={e=>{setDestH(+e.target.value);clearRoutes();}}>
-                  {hOpts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                <select className="od-select" value={destinoH} onChange={e=>{setDestinoH(+e.target.value);limpiarRutas();}}>
+                  {opcionesH.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                 </select>
               </div>
               <div className="od-field">
                 <div className="od-field-label">
                   <div className="od-badge dest">D</div> Destino V
                 </div>
-                <select className="od-select" value={destV} onChange={e=>{setDestV(+e.target.value);clearRoutes();}}>
-                  {vOpts.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
+                <select className="od-select" value={destinoV} onChange={e=>{setDestinoV(+e.target.value);limpiarRutas();}}>
+                  {opcionesV.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}
                 </select>
               </div>
             </div>
@@ -148,10 +148,10 @@ export default function Page() {
 
           {/* Botones */}
           <div className="action-row">
-            <button className="btn-calc" onClick={calcRoutes}>
+            <button className="btn-calc" onClick={calcularRutas}>
               ⚡ Calcular rutas
             </button>
-            <button className="btn-secondary" onClick={fullReset} title="Reiniciar todo">
+            <button className="btn-secondary" onClick={reinicioCompleto} title="Reiniciar todo">
               ↺
             </button>
           </div>
@@ -180,35 +180,35 @@ export default function Page() {
       <div className="main-area">
         <div className="map-wrap">
           <MapCanvas
-            incidents={incidents} routes={routes}
-            originH={originH} originV={originV}
-            destH={destH} destV={destV}
-            isPlaying={isPlaying} playSpeed={playSpeed}
-            selectedRoute={selRoute} taxiProgress={taxiProg}
-            onContextMenu={onCtxMenu}
-            onTaxiProgress={onTaxiProg}
-            onTaxiDone={onTaxiDone}
+            incidents={incidencias} routes={rutas}
+            originH={origenH} originV={origenV}
+            destH={destinoH} destV={destinoV}
+            isPlaying={estaReproduciendo} playSpeed={velocidadReproduccion}
+            selectedRoute={rutaSeleccionada} taxiProgress={progresoTaxi}
+            onContextMenu={alAbrirMenuContextual}
+            onTaxiProgress={alCambiarProgresoTaxi}
+            onTaxiDone={alTerminarTaxi}
           />
 
-          {routes.length > 0 && (
+          {rutas.length > 0 && (
             <PlayHUD
-              routes={routes} selectedRoute={selRoute}
-              isPlaying={isPlaying} playSpeed={playSpeed} taxiProgress={taxiProg}
-              onSelectRoute={(i)=>{setSelRoute(i);resetTaxi();}}
-              onPlay={()=>setIsPlaying(true)}
-              onPause={()=>setIsPlaying(false)}
-              onReset={resetTaxi}
-              onSpeedCycle={()=>setPlaySpeed(p=>{const i=SPEEDS.indexOf(p);return SPEEDS[(i+1)%SPEEDS.length];})}
+              routes={rutas} selectedRoute={rutaSeleccionada}
+              isPlaying={estaReproduciendo} playSpeed={velocidadReproduccion} taxiProgress={progresoTaxi}
+              onSelectRoute={(i)=>{setRutaSeleccionada(i);reiniciarTaxi();}}
+              onPlay={()=>setEstaReproduciendo(true)}
+              onPause={()=>setEstaReproduciendo(false)}
+              onReset={reiniciarTaxi}
+              onSpeedCycle={()=>setVelocidadReproduccion(p=>{const i=VELOCIDADES.indexOf(p);return VELOCIDADES[(i+1)%VELOCIDADES.length];})}
             />
           )}
         </div>
 
-        <RouteResults routes={routes} graph={graph} error={error} />
+        <RouteResults routes={rutas} graph={grafo} error={mensajeError} />
       </div>
 
-      <ContextMenu state={ctx} onClose={()=>setCtx(CLOSED)}
-        onSetOrigin={ctxOrigin} onSetDest={ctxDest}
-        onAddIncident={ctxAddInc} onRemoveIncident={ctxRmInc}/>
+      <ContextMenu state={estadoMenu} onClose={()=>setEstadoMenu(MENU_CERRADO)}
+        onSetOrigin={menuPonerOrigen} onSetDest={menuPonerDestino}
+        onAddIncident={menuAgregarIncidencia} onRemoveIncident={menuQuitarIncidencia}/>
     </div>
   );
 }
