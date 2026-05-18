@@ -124,7 +124,7 @@ export default function Page() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="brand-row">
-            <div className="brand-icon-wrap">UN</div>
+            <img className="brand-icon-wrap" src="https://res.cloudinary.com/dgxg2q8xs/image/upload/q_auto/f_auto/v1779115477/704fa1f8-48fc-4441-a708-86fc65289fe9_pefjkp.png" alt="Urban Navigator logo" />
             <div className="brand-text-wrap">
               <div className="brand-title">Urban Navigator</div>
               <div className="brand-tagline">Control urbano tactico · Tau Prolog</div>
