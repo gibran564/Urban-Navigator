@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import type { Incident, Route } from '@/lib/types';
 import { nrc, hDir, vDir, NROWS, NCOLS } from '@/lib/graph';
 
-// ─── Layout ───────────────────────────────────────────────────────────────────
+// Medidas del mapa
 const STREET = 16, BLOCK = 54, STEP = STREET + BLOCK; // 70px per cell
 const MOFF   = 54;
 const GRID   = NCOLS * STEP - BLOCK; // 726 - 54 = 672... let me recalc
@@ -14,11 +14,11 @@ const GRID_W = NCOLS * STREET + (NCOLS - 1) * BLOCK; // 716
 const CW = MOFF * 2 + GRID_W;  // 108 + 716 = 824
 const CH = CW;
 
-// Node center positions
+// Centro de cada nodo
 const nx = (c: number) => MOFF + c * STEP + STREET / 2;
 const ny = (r: number) => MOFF + r * STEP + STREET / 2;
 
-// ─── Warm palette ─────────────────────────────────────────────────────────────
+// Colores
 const C = {
   bg:        0xfdf7ee,  // warm cream canvas
   street:    0xe0d4c0,  // warm tan street surface
@@ -43,7 +43,7 @@ const C = {
   textDark:   0x3c2a1e,
   textMuted:  0x9a8070,
 
-  // Taxi
+  // Mueve taxi
   taxiBody:   0xfdd835,
   taxiRoof:   0xf9a825,
   taxiGlass:  0x90caf9,
@@ -51,15 +51,15 @@ const C = {
   taxiLight:  0xfff9c4,
 };
 
-// Traffic car palette — warm varied colors visible on light bg
+// Colores de autos para trafico
 const CAR_COLORS = [0xe53935, 0x1e88e5, 0x43a047, 0xfb8c00, 0x8e24aa, 0x00897b, 0xd81b60, 0xf4511e];
 
-// Layer map
+// Capas de dibujo
 const L = { BG:0, GRID:1, INC_HALO:2, TRAFFIC:3, R0:4, R1:5, R2:6, MARKERS:7, LABELS:8, HOVER:9, TAXI:10 };
 
 const ROUTE_COLORS = [C.r0, C.r1, C.r2];
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Tipos
 interface TrafficCar {
   x1:number; y1:number; x2:number; y2:number;
   isH:boolean; progress:number; speed:number;
@@ -78,7 +78,7 @@ export interface MapCanvasProps {
   onTaxiDone:()=>void;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// Componente principal
 export default function MapCanvas(p: MapCanvasProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ctxRef  = useRef<{PIXI:any;app:any;layers:any[]}|null>(null);
@@ -94,13 +94,13 @@ export default function MapCanvas(p: MapCanvasProps) {
 
   pRef.current = p;
 
-  // Taxi progress sync
+  // Sincroniza el avance del taxi
   useEffect(() => {
     animRef.current.taxiProg = p.taxiProgress;
     if (p.taxiProgress === 0) { animRef.current.taxiTrail = []; animRef.current.taxiAngle = 0; }
   }, [p.taxiProgress]);
 
-  // Route reveal reset
+  // Reinicia animacion cuando cambian rutas
   const rKey = p.routes.map(r => r.cost).join(',');
   if (rKey !== animRef.current.revealKey) {
     animRef.current.revealProg = [0,0,0];
@@ -109,7 +109,7 @@ export default function MapCanvas(p: MapCanvasProps) {
 
   useEffect(() => { if (ctxRef.current) redrawStatic(); });
 
-  // ── Mount ──────────────────────────────────────────────────────────────────
+  // Monta PIXI una sola vez
   useEffect(() => {
     if (!hostRef.current) return;
     let alive = true;
@@ -159,11 +159,11 @@ export default function MapCanvas(p: MapCanvasProps) {
         const cp   = pRef.current;
         anim.t += delta * 0.04;
 
-        // Re-init traffic cars if incidents changed
+        // Recrea autos si cambian incidencias
         const incKey = cp.incidents.map(i => `${i.type}:${i.hIdx}:${i.vIdx}`).join('|');
         if (incKey !== anim.incKey) { anim.incKey = incKey; initCars(cp.incidents); }
 
-        // Route reveal
+        // Anima aparicion de rutas
         let dirty = false;
         for (let i = 0; i < 3; i++) {
           if (i < cp.routes.length && anim.revealProg[i] < 1) {
@@ -173,11 +173,11 @@ export default function MapCanvas(p: MapCanvasProps) {
         }
         if (dirty) drawRoutes();
 
-        // Traffic cars
+        // Mueve autos de trafico
         for (const car of anim.cars) car.progress = (car.progress + delta * car.speed) % 1;
         if (anim.cars.length) drawTraffic();
 
-        // Taxi
+        // Mueve taxi
         if (cp.isPlaying) {
           anim.taxiProg = Math.min(1, anim.taxiProg + delta * 0.0022 * cp.playSpeed);
           cp.onTaxiProgress(anim.taxiProg);
@@ -191,7 +191,7 @@ export default function MapCanvas(p: MapCanvasProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─────────────────────────────────────────────────────────────────────────────
+  // Helpers de dibujo
   function layer(i: number) {
     const ctx = ctxRef.current;
     if (!ctx) return null;
@@ -209,7 +209,7 @@ export default function MapCanvas(p: MapCanvasProps) {
     drawHover();
   }
 
-  // ── Warm background ────────────────────────────────────────────────────────
+  // Dibuja fondo
   function drawBackground() {
     const ctx = ctxRef.current; const con = layer(L.BG); if (!ctx || !con) return;
     const { PIXI } = ctx;
@@ -632,18 +632,7 @@ export default function MapCanvas(p: MapCanvasProps) {
     hl.beginFill(0xfff9c4, 0.08); hl.drawCircle(hx, hy, 32); hl.endFill();
     con.addChild(hl);
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // TAXI SPRITE SLOT
-    // Swap the Graphics taxi body below with a PIXI.Sprite:
-    //
-    //   const spr = new PIXI.Sprite(taxiTexture);
-    //   spr.anchor.set(0.5);
-    //   spr.width = 28; spr.height = 17;  // pivot = center
-    //   spr.x = pos.x; spr.y = pos.y;
-    //   spr.rotation = ang;
-    //   con.addChild(spr);
-    //   return;   ← skip the Graphics code below
-    // ─────────────────────────────────────────────────────────────────────────
+    // Dibujo simple del taxi
 
     const taxi = new PIXI.Container();
     taxi.position.set(pos.x, pos.y);
@@ -660,7 +649,7 @@ export default function MapCanvas(p: MapCanvasProps) {
     b.lineStyle(0);
     // Rear window
     b.beginFill(C.taxiGlass, 0.5); b.drawRoundedRect(-12, -5, 5, 10, 1.5); b.endFill();
-    // Taxi roof sign
+    // Letrero del taxi
     b.beginFill(0xffffff, 0.95); b.drawRoundedRect(-5, -14, 10, 6, 2); b.endFill();
     b.beginFill(C.iTraffic, 0.7); b.drawRoundedRect(-3, -13, 6, 4, 1); b.endFill();
     // Checker stripe

@@ -49,7 +49,7 @@ export default function Page() {
     resetTaxi(); setCtx(CLOSED);
   };
 
-  // Context menu
+  // Menu con clic derecho
   const onCtxMenu = useCallback((r:number, c:number, sx:number, sy:number) => {
     setIncidents(inc => {
       const has = inc.some(i => i.hIdx===r && i.vIdx===c && i.type!=='none');
@@ -82,7 +82,7 @@ export default function Page() {
 
   return (
     <div className="app-layout">
-      {/* ── Sidebar ──────────────────────────────────────────── */}
+      {/* Panel lateral */}
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="brand-row">
@@ -95,7 +95,7 @@ export default function Page() {
         </div>
 
         <div className="sidebar-scroll">
-          {/* OD */}
+          {/* Origen y destino */}
           <div className="section-card">
             <div className="section-title">
               <span className="section-title-icon">📍</span> Origen y Destino
@@ -142,11 +142,11 @@ export default function Page() {
             </div>
           </div>
 
-          {/* Incidents */}
+          {/* Incidencias */}
           <IncidentPanel incidents={incidents}
             onChange={inc=>{setIncidents(inc);clearRoutes();}}/>
 
-          {/* Action buttons */}
+          {/* Botones */}
           <div className="action-row">
             <button className="btn-calc" onClick={calcRoutes}>
               ⚡ Calcular rutas
@@ -156,7 +156,7 @@ export default function Page() {
             </button>
           </div>
 
-          {/* Legend */}
+          {/* Leyenda */}
           <div className="section-card">
             <div className="section-title"><span className="section-title-icon">🗺️</span> Leyenda</div>
             <div className="legend-wrap">
@@ -176,7 +176,7 @@ export default function Page() {
         </div>
       </aside>
 
-      {/* ── Map ──────────────────────────────────────────────── */}
+      {/* Mapa */}
       <div className="main-area">
         <div className="map-wrap">
           <MapCanvas
